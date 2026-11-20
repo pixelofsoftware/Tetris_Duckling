@@ -1,0 +1,6 @@
+zewnetrzne/
+.duck_build/
+*/.duck_build/
+.DS_Store
+# Plik blokady duck ma ścieżki bezwzględne z tego komputera.
+quackfreeze.json

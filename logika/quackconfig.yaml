@@ -1,0 +1,5 @@
+metadata:
+  name: tetris_logika
+  version: '1.0.0'
+  license: MIT
+  description: Zasady Tetrisa wedlug Tetris Guideline (SRS, 7-bag, hold, lock delay), bez okna

@@ -1,0 +1,12 @@
+metadata:
+  name: tetris_gra
+  version: '1.0.0'
+  license: MIT
+  description: Tetris w Ducklingu - okno, klawiatura i rysowanie (pakiet grafika)
+dependencies:
+  tetris_logika:
+    source:
+      path: '../logika'
+  grafika:
+    source:
+      path: '../zewnetrzne/grafika'
