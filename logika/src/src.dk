@@ -1,0 +1,534 @@
+#{
+    Tetris: logika gry (model), bez okna. Zasady według Tetris Guideline:
+
+    * plansza 10 kolumn x 20 widocznych wierszy, nad nią 2 ukryte wiersze,
+    * 7 klocków (I, O, T, S, Z, J, L), obroty SRS z przesunięciami przy ścianach (wall kicks),
+    * losowanie "7-bag": każde kolejne 7 klocków to wszystkie rodzaje w losowej kolejności,
+    * podgląd 5 następnych klocków, schowek (hold) raz na klocek, cień miejsca lądowania,
+    * miękki zrzut (+1 pkt za wiersz) i twardy zrzut (+2 pkt za wiersz, od razu blokuje),
+    * blokada po 0,5 s leżenia; ruch albo obrót odnawia ten czas najwyżej 15 razy,
+    * punkty za linie: 100 / 300 / 500 / 800 razy poziom; poziom rośnie co 10 linii,
+    * prędkość: (0,8 - (poziom - 1) * 0,007) ^ (poziom - 1) sekundy na wiersz,
+    * koniec gry, gdy nowy klocek nie ma miejsca albo klocek zablokuje się cały nad planszą.
+
+    Współrzędne: x od 0 (lewa) do 9, y od 0 (góra, ukryte) do 21 (dół), oś Y w dół.
+#}
+
+const SZER: i32 = 10;
+const WYS: i32 = 22;               # 20 widocznych + 2 ukryte nad nimi
+const UKRYTE: i32 = 2;
+const DLUGOSC_KOLEJKI: i64 = 5;
+
+# Rodzaje klocków; 0 to puste pole planszy.
+const PUSTE: i32 = 0;
+const I: i32 = 1;
+const O: i32 = 2;
+const T: i32 = 3;
+const S: i32 = 4;
+const Z: i32 = 5;
+const J: i32 = 6;
+const L: i32 = 7;
+
+const BLOKADA_S: f32 = 0.5;        # opóźnienie blokady
+const MAKS_RESETOW: i32 = 15;      # ile razy ruch/obrót odnawia blokadę
+const DAS_S: f32 = 0.17f32;        # po tylu sekundach przytrzymania klocek zaczyna sunąć
+const ARR_S: f32 = 0.05f32;        # co tyle sekund przesuwa się przy przytrzymaniu
+const MIEKKI_MNOZNIK: f32 = 20.0;  # miękki zrzut: 20 razy szybciej niż grawitacja
+
+class Pkt { x: i32 = 0; y: i32 = 0; }
+
+# Klocek w ruchu: rodzaj, obrót (0 = start, 1 = R, 2, 3 = L) i lewy górny róg ramki.
+class Klocek { typ: i32 = PUSTE; obrot: i32 = 0; x: i32 = 0; y: i32 = 0; }
+
+# Przyciski w danej klatce: "trzymane" (lewo, prawo, miekki) i "właśnie naciśnięte" (reszta).
+class Sterowanie {
+    lewo: bool = false;
+    prawo: bool = false;
+    miekki: bool = false;       # miękki zrzut (strzałka w dół)
+    obrotPrawo: bool = false;
+    obrotLewo: bool = false;
+    twardy: bool = false;       # twardy zrzut (spacja)
+    trzymaj: bool = false;      # schowek (C)
+}
+
+fun pustaListaI32() -> List[i32] = {
+    var pusta: List[i32];
+    return pusta;
+}
+
+fun pustaPlansza() -> List[i32] = {
+    var plansza: List[i32];
+    var n: i32 = 0;
+    while (n < SZER * WYS) { plansza.push(PUSTE); n += 1; }
+    return plansza;
+}
+
+class Gra {
+    plansza: List[i32] = pustaPlansza();
+    aktywny: Klocek = Klocek();
+    kolejka: List[i32] = pustaListaI32();   # następne klocki, pierwszy wchodzi jako kolejny
+    worek: List[i32] = pustaListaI32();     # reszta bieżącego worka 7-bag
+    schowek: i32 = PUSTE;
+    schowekUzyty: bool = false;
+    punkty: i64 = 0;
+    linie: i32 = 0;
+    poziom: i32 = 1;
+    koniec: bool = false;
+    pauza: bool = false;
+    czasSpadania: f32 = 0.0;
+    czasBlokady: f32 = 0.0;
+    resetyBlokady: i32 = 0;
+    najnizszyY: i32 = 0;
+    # Przesuwanie w bok z przytrzymaniem (DAS / ARR).
+    kierunek: i32 = 0;
+    czasPrzytrzymania: f32 = 0.0;
+    czasPowtorzenia: f32 = 0.0;
+    # Ostatnio usunięte linie (do napisu "TETRIS!") i licznik klocków.
+    ostatnieLinie: i32 = 0;
+    klocki: i64 = 0;
+    los: u64 = 1u64;
+}
+
+# --- kształty i obroty (SRS) -------------------------------------------------------
+
+#{
+    Kształt w pozycji startowej: 4 pola, każde zapisane na 4 bitach (x = 2 bity, y = 2 bity
+    wyżej), pole k na bitach 4k..4k+3. Ramka ma 4x4 dla I i O, 3x3 dla reszty.
+    Przykład T: pola (1,0), (0,1), (1,1), (2,1) -> 1, 4, 5, 6 -> 0x6541.
+#}
+fun kodKsztaltu(typ: i32) -> i32 = {
+    var kod: i32 = 0;
+    if (typ == I) kod = 0x7654;   # ....  / IIII
+    if (typ == O) kod = 0x6521;   # .OO.  / .OO.
+    if (typ == T) kod = 0x6541;   # .T.   / TTT
+    if (typ == S) kod = 0x5421;   # .SS   / SS.
+    if (typ == Z) kod = 0x6510;   # ZZ.   / .ZZ
+    if (typ == J) kod = 0x6540;   # J..   / JJJ
+    if (typ == L) kod = 0x6542;   # ..L   / LLL
+    return kod;
+}
+
+fun rozmiarRamki(typ: i32) -> i32 = {
+    if (typ == I or typ == O) return 4;
+    return 3;
+}
+
+# Pole numer k (0..3) klocka typ w obrocie obrot, względem lewego górnego rogu ramki.
+fun pole(typ: i32, obrot: i32, k: i32) -> Pkt = {
+    let kod = kodKsztaltu(typ);
+    let czworka = (kod >> (4 * k)) & 15;
+    var px: i32 = czworka & 3;
+    var py: i32 = czworka >> 2;
+    if (typ != O) {
+        # Obrót zgodnie z ruchem wskazówek zegara wokół środka ramki: (x, y) -> (n-1-y, x).
+        let n = rozmiarRamki(typ);
+        var r: i32 = 0;
+        while (r < ((obrot % 4) + 4) % 4) {
+            let staryX = px;
+            px = n - 1 - py;
+            py = staryX;
+            r += 1;
+        }
+    }
+    return Pkt(px, py);
+}
+
+#{
+    Przesunięcia SRS (wall kicks) dla obrotu z -> na, test 0..4. Liczby jak w tabelach
+    Tetris Guideline: x w prawo, y W GÓRĘ (planszę mamy z osią Y w dół, więc y odwracamy
+    przy użyciu). Stany: 0 = start, 1 = R, 2 = obrócony dwa razy, 3 = L.
+#}
+fun kickA(t: i32) -> Pkt = {   # J L S T Z: 0->R i 2->R
+    if (t == 1) return Pkt(-1, 0);
+    if (t == 2) return Pkt(-1, 1);
+    if (t == 3) return Pkt(0, -2);
+    if (t == 4) return Pkt(-1, -2);
+    return Pkt(0, 0);
+}
+fun kickP(t: i32) -> Pkt = {   # I: 0->R i L->2
+    if (t == 1) return Pkt(-2, 0);
+    if (t == 2) return Pkt(1, 0);
+    if (t == 3) return Pkt(-2, -1);
+    if (t == 4) return Pkt(1, 2);
+    return Pkt(0, 0);
+}
+fun kickQ(t: i32) -> Pkt = {   # I: R->2 i 0->L
+    if (t == 1) return Pkt(-1, 0);
+    if (t == 2) return Pkt(2, 0);
+    if (t == 3) return Pkt(-1, 2);
+    if (t == 4) return Pkt(2, -1);
+    return Pkt(0, 0);
+}
+
+fun przesuniecieSrs(typ: i32, z: i32, na: i32, t: i32) -> Pkt = {
+    var wynik = Pkt(0, 0);
+    if (typ == O) return wynik;   # O się nie przesuwa
+    if (typ == I) {
+        # Osiem przejść I to P, -P, Q, -Q w odpowiednich parach (tabela SRS).
+        if ((z == 0 and na == 1) or (z == 3 and na == 2)) wynik = kickP(t);
+        if ((z == 1 and na == 0) or (z == 2 and na == 3)) { let p = kickP(t); wynik = Pkt(-p.x, -p.y); }
+        if ((z == 1 and na == 2) or (z == 0 and na == 3)) wynik = kickQ(t);
+        if ((z == 2 and na == 1) or (z == 3 and na == 0)) { let q = kickQ(t); wynik = Pkt(-q.x, -q.y); }
+        return wynik;
+    }
+    # J L S T Z: przejścia do R i z R używają tabeli A, do L i z L jej lustra;
+    # przejścia ZE stanu R albo L mają znaki odwrócone.
+    let a = kickA(t);
+    var dx: i32 = a.x;
+    var dy: i32 = a.y;
+    if (not (na == 1 or z == 1)) dx = -dx;
+    if (z == 1 or z == 3) { dx = -dx; dy = -dy; }
+    return Pkt(dx, dy);
+}
+
+# --- plansza -------------------------------------------------------------------------
+
+fun indeks(px: i32, py: i32) -> i64 = (py * SZER + px) as i64;
+
+fun polePlanszy(gra: ref Gra, px: i32, py: i32) -> i32 = {
+    if (px < 0 or px >= SZER or py < 0 or py >= WYS) return -1;   # poza planszą
+    return gra.plansza.at(indeks(px, py));
+}
+
+fun ustawPole(gra: ref Gra, px: i32, py: i32, wartosc: i32) -> () = {
+    if (px >= 0 and px < SZER and py >= 0 and py < WYS) gra.plansza.at(indeks(px, py)) = wartosc;
+}
+
+# Czy klocek w danym położeniu mieści się na planszy i nie nachodzi na zajęte pola.
+fun pasuje(gra: ref Gra, k: ref Klocek) -> bool = {
+    var dobrze = true;
+    var n: i32 = 0;
+    while (n < 4) {
+        let p = pole(k.typ, k.obrot, n);
+        if (polePlanszy(gra, k.x + p.x, k.y + p.y) != PUSTE) dobrze = false;
+        n += 1;
+    }
+    return dobrze;
+}
+
+# --- losowanie 7-bag -----------------------------------------------------------------
+
+fun nastepnaLiczba(gra: ref Gra) -> u64 = {
+    var s: u64 = gra.los;
+    s = s ^ (s >> 12u64);
+    s = s ^ (s << 25u64);
+    s = s ^ (s >> 27u64);
+    gra.los = s;
+    return s * 0x2545f4914f6cdd1du64;
+}
+
+# Następny klocek z worka; pusty worek napełniamy wszystkimi 7 rodzajami i tasujemy.
+fun zWorka(gra: ref Gra) -> i32 = {
+    if (gra.worek.length() == 0) {
+        var nowy: List[i32];
+        var t: i32 = 1;
+        while (t <= 7) { nowy.push(t); t += 1; }
+        # Tasowanie Fishera-Yatesa.
+        var i: i64 = 6;
+        while (i > 0) {
+            let j = (nastepnaLiczba(gra) % ((i + 1) as u64)) as i64;
+            # var z typem: `let x = lista.at(i)` byłoby aliasem elementu, nie kopią.
+            var tymczasowy: i32 = nowy.at(i);
+            nowy.at(i) = nowy.at(j);
+            nowy.at(j) = tymczasowy;
+            i -= 1;
+        }
+        gra.worek = move nowy;
+    }
+    # Bierzemy ostatni element (lista nie ma usuwania z początku).
+    let ostatni = gra.worek.length() - 1;
+    var wylosowany: i32 = gra.worek.at(ostatni);   # kopia, bo zaraz podmieniamy listę
+    var reszta: List[i32];
+    var k: i64 = 0;
+    while (k < ostatni) { reszta.push(gra.worek.at(k)); k += 1; }
+    gra.worek = move reszta;
+    return wylosowany;
+}
+
+fun uzupelnijKolejke(gra: ref Gra) -> () = {
+    while (gra.kolejka.length() < DLUGOSC_KOLEJKI) gra.kolejka.push(zWorka(gra));
+}
+
+fun zdejmijZKolejki(gra: ref Gra) -> i32 = {
+    uzupelnijKolejke(gra);
+    var pierwszy: i32 = gra.kolejka.at(0);   # kopia, bo zaraz podmieniamy listę
+    var reszta: List[i32];
+    var k: i64 = 1;
+    while (k < gra.kolejka.length()) { reszta.push(gra.kolejka.at(k)); k += 1; }
+    gra.kolejka = move reszta;
+    uzupelnijKolejke(gra);
+    return pierwszy;
+}
+
+# --- nowy klocek, nowa gra ------------------------------------------------------------
+
+# Klocek wchodzi w dwóch górnych widocznych wierszach, wyśrodkowany (3-polowe w lewo).
+# Gdy tam nie pasuje, próbujemy wiersz wyżej; gdy i tam nie, koniec gry (block out).
+fun wstaw(gra: ref Gra, typ: i32) -> () = {
+    var k = Klocek(typ, 0, 3, UKRYTE);
+    if (typ == I) k.y = UKRYTE - 1;   # I ma pola w drugim wierszu ramki
+    if (not pasuje(gra, &k)) k.y -= 1;
+    gra.aktywny = k;
+    gra.czasSpadania = 0.0;
+    gra.czasBlokady = 0.0;
+    gra.resetyBlokady = 0;
+    gra.najnizszyY = k.y;
+    if (not pasuje(gra, &k)) gra.koniec = true;
+}
+
+fun nowaGra(ziarno: u64) -> Gra = {
+    var gra = Gra();
+    if (ziarno == 0u64) gra.los = 1u64;
+    else gra.los = ziarno;
+    uzupelnijKolejke(&gra);
+    wstaw(&gra, zdejmijZKolejki(&gra));
+    return gra;
+}
+
+# --- ruch ------------------------------------------------------------------------------
+
+fun naZiemi(gra: ref Gra) -> bool = {
+    var nizej = gra.aktywny;
+    nizej.y += 1;
+    return not pasuje(gra, &nizej);
+}
+
+# Udany ruch albo obrót leżącego klocka odnawia czas blokady (najwyżej MAKS_RESETOW razy).
+fun poRuchu(gra: ref Gra) -> () = {
+    if (gra.resetyBlokady < MAKS_RESETOW) {
+        gra.czasBlokady = 0.0;
+        if (naZiemi(gra)) gra.resetyBlokady += 1;
+    }
+}
+
+fun przesun(gra: ref Gra, dx: i32) -> bool = {
+    if (gra.koniec) return false;
+    var proba = gra.aktywny;
+    proba.x += dx;
+    if (not pasuje(gra, &proba)) return false;
+    gra.aktywny = proba;
+    poRuchu(gra);
+    return true;
+}
+
+# Obrót o kierunek (+1 zgodnie z zegarem, -1 przeciwnie) z testami przesunięć SRS.
+fun obroc(gra: ref Gra, kierunekObrotu: i32) -> bool = {
+    if (gra.koniec) return false;
+    let z = gra.aktywny.obrot;
+    let na = ((z + kierunekObrotu) % 4 + 4) % 4;
+    var udany = false;
+    var nrTestu: i32 = 0;
+    while (nrTestu < 5 and not udany) {
+        let przes = przesuniecieSrs(gra.aktywny.typ, z, na, nrTestu);
+        var proba = gra.aktywny;
+        proba.obrot = na;
+        proba.x += przes.x;
+        proba.y -= przes.y;   # w tabeli SRS y rośnie w górę
+        if (pasuje(gra, &proba)) {
+            gra.aktywny = proba;
+            udany = true;
+        }
+        nrTestu += 1;
+    }
+    if (udany) poRuchu(gra);
+    return udany;
+}
+
+# O ile wierszy klocek może jeszcze spaść (cień i twardy zrzut).
+fun wysokoscSpadku(gra: ref Gra) -> i32 = {
+    var nizej = gra.aktywny;
+    var wiersze: i32 = 0;
+    var dalej = true;
+    while (dalej) {
+        nizej.y += 1;
+        if (pasuje(gra, &nizej)) wiersze += 1;
+        else dalej = false;
+    }
+    return wiersze;
+}
+
+fun cien(gra: ref Gra) -> Klocek = {
+    var c = gra.aktywny;
+    c.y += wysokoscSpadku(gra);
+    return c;
+}
+
+# Spadek o jeden wiersz; false, gdy klocek leży.
+fun spadnij(gra: ref Gra) -> bool = {
+    var nizej = gra.aktywny;
+    nizej.y += 1;
+    if (not pasuje(gra, &nizej)) return false;
+    gra.aktywny = nizej;
+    if (nizej.y > gra.najnizszyY) {
+        # Nowy, niższy wiersz: licznik odnowień blokady zaczyna się od zera.
+        gra.najnizszyY = nizej.y;
+        gra.resetyBlokady = 0;
+        gra.czasBlokady = 0.0;
+    }
+    return true;
+}
+
+# --- blokada, linie, punkty ---------------------------------------------------------------
+
+fun punktyZaLinie(liczba: i32) -> i64 = {
+    if (liczba == 1) return 100;
+    if (liczba == 2) return 300;
+    if (liczba == 3) return 500;
+    if (liczba == 4) return 800;
+    return 0;
+}
+
+fun pelnyWiersz(gra: ref Gra, wiersz: i32) -> bool = {
+    var pelny = true;
+    var kol: i32 = 0;
+    while (kol < SZER) {
+        if (polePlanszy(gra, kol, wiersz) == PUSTE) pelny = false;
+        kol += 1;
+    }
+    return pelny;
+}
+
+# Usuń pełne wiersze, przesuń resztę w dół; zwraca liczbę usuniętych.
+fun usunLinie(gra: ref Gra) -> i32 = {
+    var nowa: List[i32];
+    var usuniete: i32 = 0;
+    # Najpierw puste wiersze w miejsce usuniętych, potem niepełne w starej kolejności.
+    var w: i32 = 0;
+    while (w < WYS) {
+        if (pelnyWiersz(gra, w)) usuniete += 1;
+        w += 1;
+    }
+    var p: i32 = 0;
+    while (p < usuniete * SZER) { nowa.push(PUSTE); p += 1; }
+    var wiersz: i32 = 0;
+    while (wiersz < WYS) {
+        if (not pelnyWiersz(gra, wiersz)) {
+            var kolumna: i32 = 0;
+            while (kolumna < SZER) { nowa.push(polePlanszy(gra, kolumna, wiersz)); kolumna += 1; }
+        }
+        wiersz += 1;
+    }
+    gra.plansza = move nowa;
+    return usuniete;
+}
+
+fun zablokuj(gra: ref Gra) -> () = {
+    var caleNadPlansza = true;
+    var n: i32 = 0;
+    while (n < 4) {
+        let p = pole(gra.aktywny.typ, gra.aktywny.obrot, n);
+        ustawPole(gra, gra.aktywny.x + p.x, gra.aktywny.y + p.y, gra.aktywny.typ);
+        if (gra.aktywny.y + p.y >= UKRYTE) caleNadPlansza = false;
+        n += 1;
+    }
+    let usuniete = usunLinie(gra);
+    gra.punkty += punktyZaLinie(usuniete) * (gra.poziom as i64);
+    gra.linie += usuniete;
+    gra.poziom = 1 + gra.linie / 10;
+    gra.ostatnieLinie = usuniete;
+    gra.klocki += 1;
+    gra.schowekUzyty = false;
+    if (caleNadPlansza) {
+        gra.koniec = true;   # lock out: klocek cały w ukrytych wierszach
+    } else {
+        wstaw(gra, zdejmijZKolejki(gra));
+    }
+}
+
+fun twardyZrzut(gra: ref Gra) -> () = {
+    if (not gra.koniec) {
+        let wiersze = wysokoscSpadku(gra);
+        gra.aktywny.y += wiersze;
+        gra.punkty += (2 * wiersze) as i64;
+        zablokuj(gra);
+    }
+}
+
+fun schowaj(gra: ref Gra) -> bool = {
+    if (gra.koniec or gra.schowekUzyty) return false;
+    let biezacy = gra.aktywny.typ;
+    if (gra.schowek == PUSTE) wstaw(gra, zdejmijZKolejki(gra));
+    else wstaw(gra, gra.schowek);
+    gra.schowek = biezacy;
+    gra.schowekUzyty = true;
+    return true;
+}
+
+# --- czas ----------------------------------------------------------------------------------
+
+# Sekundy na jeden wiersz spadku: (0,8 - (poziom-1) * 0,007) ^ (poziom-1); od 20 poziomu stała.
+fun czasNaWiersz(poziom: i32) -> f32 = {
+    var p: i32 = poziom;
+    if (p < 1) p = 1;
+    if (p > 20) p = 20;
+    let podstawa: f32 = 0.8f32 - ((p - 1) as f32) * 0.007f32;
+    var wynik: f32 = 1.0;
+    var k: i32 = 1;
+    while (k < p) { wynik *= podstawa; k += 1; }
+    return wynik;
+}
+
+fun przesuwanieWBok(gra: ref Gra, dt: f32, ster: ref Sterowanie) -> () = {
+    var chce: i32 = 0;
+    if (ster.lewo and not ster.prawo) chce = -1;
+    if (ster.prawo and not ster.lewo) chce = 1;
+    if (chce == 0) {
+        gra.kierunek = 0;
+    } else {
+        if (chce != gra.kierunek) {
+            # Nowe naciśnięcie: od razu jeden krok, potem czekamy DAS.
+            gra.kierunek = chce;
+            gra.czasPrzytrzymania = 0.0;
+            gra.czasPowtorzenia = 0.0;
+            przesun(gra, chce);
+        } else {
+            gra.czasPrzytrzymania += dt;
+            if (gra.czasPrzytrzymania >= DAS_S) {
+                gra.czasPowtorzenia += dt;
+                var dalej = true;
+                while (gra.czasPowtorzenia >= ARR_S and dalej) {
+                    gra.czasPowtorzenia -= ARR_S;
+                    dalej = przesun(gra, chce);
+                }
+                if (not dalej) gra.czasPowtorzenia = 0.0;
+            }
+        }
+    }
+}
+
+# Grawitacja i blokada; miękki zrzut przyspiesza spadanie i daje punkt za każdy wiersz.
+fun grawitacja(gra: ref Gra, dt: f32, miekki: bool) -> () = {
+    var naWiersz = czasNaWiersz(gra.poziom);
+    if (miekki) naWiersz = naWiersz / MIEKKI_MNOZNIK;
+    gra.czasSpadania += dt;
+    var spada = true;
+    while (gra.czasSpadania >= naWiersz and spada) {
+        gra.czasSpadania -= naWiersz;
+        spada = spadnij(gra);
+        if (spada and miekki) gra.punkty += 1;
+    }
+    # Blokada: leżący klocek po BLOKADA_S sekundach staje się częścią planszy.
+    if (naZiemi(gra)) {
+        gra.czasSpadania = 0.0;
+        gra.czasBlokady += dt;
+        if (gra.czasBlokady >= BLOKADA_S) zablokuj(gra);
+    } else {
+        gra.czasBlokady = 0.0;
+    }
+}
+
+# Jedna klatka gry. W pauzie i po końcu gry nic się nie zmienia.
+fun aktualizuj(gra: ref Gra, czasKlatki: f32, ster: ref Sterowanie) -> () = {
+    if (not gra.koniec and not gra.pauza) {
+        var dt: f32 = czasKlatki;
+        if (not (dt > 0.0)) dt = 0.0;   # także NaN
+        if (dt > 0.1f32) dt = 0.1f32;   # po długiej przerwie nie nadrabiamy sekund
+        gra.ostatnieLinie = 0;
+        if (ster.trzymaj) schowaj(gra);
+        if (ster.obrotPrawo) obroc(gra, 1);
+        if (ster.obrotLewo) obroc(gra, -1);
+        przesuwanieWBok(gra, dt, ster);
+        if (ster.twardy) twardyZrzut(gra);
+        else grawitacja(gra, dt, ster.miekki);
+    }
+}

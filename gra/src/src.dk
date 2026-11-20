@@ -1,0 +1,329 @@
+#{
+    Tetris: okno, klawiatura i rysowanie (pakiet grafika). Zasady są w pakiecie tetris_logika.
+
+    Sterowanie: strzałki w lewo/w prawo - ruch, strzałka w górę albo X - obrót w prawo,
+    Z - obrót w lewo, strzałka w dół - miękki zrzut, spacja - twardy zrzut, C - schowek,
+    P - pauza, R - nowa gra, Esc albo zamknięcie okna - wyjście.
+#}
+import grafika;
+import tetris_logika as model;
+import core.builtins as builtins;
+
+extern("C") {
+    fundecl write(fd: i32, data: cptr char, size: u64) -> i64;
+    fundecl getenv(name: cptr char) -> cptr char;
+}
+
+const OKNO_SZER: i32 = 640;
+const OKNO_WYS: i32 = 720;
+const POLE: i32 = 30;                 # bok pola planszy w pikselach
+const PLANSZA_X: i32 = 170;           # lewy górny róg widocznej planszy
+const PLANSZA_Y: i32 = 70;
+const MALE_POLE: i32 = 20;            # pola w schowku i podglądzie
+
+const TLO: u32 = 0x141824ffu32;
+const TLO_PLANSZY: u32 = 0x0b0f1affu32;
+const SIATKA: u32 = 0x1c2333ffu32;
+const RAMKA: u32 = 0x5b6b7fffu32;
+const NAPIS: u32 = 0xc8d0dcffu32;
+
+fun bladNaEkran(tekst: str) -> () = {
+    write(2i32, builtins.ptr_from_slice[char](tekst) as cptr char, tekst.length() as u64);
+}
+
+# Kolory klocków jak w Tetris Guideline.
+fun kolor(typ: i32) -> u32 = {
+    var k: u32 = 0x808080ffu32;
+    if (typ == model.I) k = 0x00f0f0ffu32;   # błękitny
+    if (typ == model.O) k = 0xf0f000ffu32;   # żółty
+    if (typ == model.T) k = 0xa000f0ffu32;   # fioletowy
+    if (typ == model.S) k = 0x00f000ffu32;   # zielony
+    if (typ == model.Z) k = 0xf00000ffu32;   # czerwony
+    if (typ == model.J) k = 0x0000f0ffu32;   # niebieski
+    if (typ == model.L) k = 0xf0a000ffu32;   # pomarańczowy
+    return k;
+}
+
+# Jedno pole klocka: wypełnienie, jaśniejszy górny pasek i ciemny brzeg.
+fun rysujPole(px: i32, py: i32, bok: i32, typ: i32) -> () = {
+    grafika.rectangle(px, py, bok, bok, kolor(typ));
+    grafika.rectangle(px + 2, py + 2, bok - 4, bok / 5, 0xffffff50u32);
+    grafika.rectangleLines(px, py, bok, bok, 1.0, 0x00000090u32);
+}
+
+# Wiersz planszy (2..21, wiersze 0-1 są ukryte) -> piksel na ekranie.
+fun ekranX(kolumna: i32) -> i32 = PLANSZA_X + kolumna * POLE;
+fun ekranY(wiersz: i32) -> i32 = PLANSZA_Y + (wiersz - model.UKRYTE) * POLE;
+
+fun rysujPlansze(g: ref model.Gra) -> () = {
+    grafika.rectangle(PLANSZA_X, PLANSZA_Y, model.SZER * POLE, (model.WYS - model.UKRYTE) * POLE, TLO_PLANSZY);
+    var w: i32 = model.UKRYTE;
+    while (w < model.WYS) {
+        var k: i32 = 0;
+        while (k < model.SZER) {
+            let zawartosc = model.polePlanszy(g, k, w);
+            if (zawartosc != model.PUSTE) rysujPole(ekranX(k), ekranY(w), POLE, zawartosc);
+            else grafika.rectangleLines(ekranX(k), ekranY(w), POLE, POLE, 1.0, SIATKA);
+            k += 1;
+        }
+        w += 1;
+    }
+    grafika.rectangleLines(PLANSZA_X - 3, PLANSZA_Y - 3, model.SZER * POLE + 6,
+        (model.WYS - model.UKRYTE) * POLE + 6, 3.0, RAMKA);
+}
+
+# Klocek na planszy; cień rysujemy samym obrysem.
+fun rysujKlocek(k: ref model.Klocek, obrys: bool) -> () = {
+    var n: i32 = 0;
+    while (n < 4) {
+        let p = model.pole(k.typ, k.obrot, n);
+        let wiersz = k.y + p.y;
+        if (wiersz >= model.UKRYTE) {
+            let ex = ekranX(k.x + p.x);
+            let ey = ekranY(wiersz);
+            if (obrys) grafika.rectangleLines(ex + 2, ey + 2, POLE - 4, POLE - 4, 2.0, kolor(k.typ));
+            else rysujPole(ex, ey, POLE, k.typ);
+        }
+        n += 1;
+    }
+}
+
+# Klocek w pozycji startowej, wyśrodkowany w punkcie (cx, cy) - schowek i podgląd.
+fun rysujWSrodku(typ: i32, cx: i32, cy: i32, bok: i32, przygaszony: bool) -> () = {
+    var minX: i32 = 9;
+    var maxX: i32 = -9;
+    var minY: i32 = 9;
+    var maxY: i32 = -9;
+    var n: i32 = 0;
+    while (n < 4) {
+        let p = model.pole(typ, 0, n);
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+        n += 1;
+    }
+    let lewo = cx - ((maxX - minX + 1) * bok) / 2;
+    let gora = cy - ((maxY - minY + 1) * bok) / 2;
+    var m: i32 = 0;
+    while (m < 4) {
+        let q = model.pole(typ, 0, m);
+        let qx = lewo + (q.x - minX) * bok;
+        let qy = gora + (q.y - minY) * bok;
+        if (przygaszony) grafika.rectangle(qx, qy, bok, bok, 0x505a6affu32);
+        else rysujPole(qx, qy, bok, typ);
+        m += 1;
+    }
+}
+
+fun rysujPanele(g: ref model.Gra) -> () = {
+    # Lewy panel: schowek i wynik.
+    grafika.textDefault("SCHOWEK", 30, 70, 20, NAPIS);
+    grafika.rectangleLines(20, 95, 130, 90, 2.0, RAMKA);
+    if (g.schowek != model.PUSTE) rysujWSrodku(g.schowek, 85, 140, MALE_POLE, g.schowekUzyty);
+    grafika.textDefault("PUNKTY", 30, 220, 20, NAPIS);
+    let punkty = f"{g.punkty}";
+    grafika.textDefault(punkty.asSlice(), 30, 245, 28, grafika.WHITE);
+    grafika.textDefault("POZIOM", 30, 295, 20, NAPIS);
+    let poziom = f"{g.poziom}";
+    grafika.textDefault(poziom.asSlice(), 30, 320, 28, grafika.WHITE);
+    grafika.textDefault("LINIE", 30, 370, 20, NAPIS);
+    let linie = f"{g.linie}";
+    grafika.textDefault(linie.asSlice(), 30, 395, 28, grafika.WHITE);
+
+    # Prawy panel: 5 następnych klocków, pierwszy większy.
+    grafika.textDefault("NASTEPNE", 490, 70, 20, NAPIS);
+    grafika.rectangleLines(482, 95, 138, 400, 2.0, RAMKA);
+    var i: i64 = 0;
+    while (i < g.kolejka.length()) {
+        var typ: i32 = g.kolejka.at(i);
+        if (i == 0) rysujWSrodku(typ, 551, 140, 24, false);
+        else rysujWSrodku(typ, 551, 140 + 70 * (i as i32) + 10, MALE_POLE - 4, false);
+        i += 1;
+    }
+}
+
+fun napisNaSrodku(tekst: str, y: i32, rozmiar: i32, kolorNapisu: u32) -> () = {
+    let pomiar = grafika.textDefaultWidth(tekst, rozmiar);
+    var lewy: i32 = 0;
+    if (pomiar._1 == grafika.OK) lewy = (OKNO_SZER - pomiar._2) / 2;
+    grafika.textDefault(tekst, lewy, y, rozmiar, kolorNapisu);
+}
+
+fun opisLinii(liczba: i32) -> str = {
+    if (liczba == 1) return "1 LINIA";
+    if (liczba == 2) return "2 LINIE";
+    if (liczba == 3) return "3 LINIE";
+    if (liczba == 4) return "TETRIS!";
+    return "";
+}
+
+fun rysujScene(g: ref model.Gra, komunikat: str) -> () = {
+    napisNaSrodku("TETRIS", 18, 40, grafika.WHITE);
+    rysujPlansze(g);
+    if (not g.koniec) {
+        var c = model.cien(g);
+        rysujKlocek(&c, true);
+        rysujKlocek(&g.aktywny, false);
+    }
+    rysujPanele(g);
+    if (komunikat.length() > 0) napisNaSrodku(komunikat, 300, 40, grafika.YELLOW);
+    grafika.textDefault("<- ->  ruch    ^ / X  obrot    Z  obrot w lewo    v  w dol", 20, 678, 18, NAPIS);
+    grafika.textDefault("spacja  zrzut    C  schowek    P  pauza    R  nowa gra    Esc", 20, 698, 18, NAPIS);
+    if (g.pauza) {
+        grafika.rectangle(PLANSZA_X, PLANSZA_Y, model.SZER * POLE, (model.WYS - model.UKRYTE) * POLE, 0x000000c0u32);
+        napisNaSrodku("PAUZA", 330, 48, grafika.WHITE);
+        napisNaSrodku("P - gramy dalej", 390, 20, NAPIS);
+    }
+    if (g.koniec) {
+        grafika.rectangle(PLANSZA_X, PLANSZA_Y, model.SZER * POLE, (model.WYS - model.UKRYTE) * POLE, 0x000000c0u32);
+        napisNaSrodku("KONIEC GRY", 300, 44, grafika.RED);
+        let wynik = f"Wynik: {g.punkty}";
+        napisNaSrodku(wynik.asSlice(), 360, 26, grafika.WHITE);
+        napisNaSrodku("R - nowa gra", 400, 20, NAPIS);
+    }
+}
+
+# --- tryb zrzutów do README ---------------------------------------------------------------
+
+fun zrzutyWlaczone() -> bool = {
+    let wartosc: cptr char = getenv(builtins.ptr_from_slice[char]("TETRIS_ZRZUTY\0") as cptr char);
+    return wartosc as u64 != 0u64;
+}
+
+fun zapiszKlatke(g: ref model.Gra, komunikat: str, sciezka: str) -> i32 = {
+    grafika.frameBegin(TLO);
+    rysujScene(g, komunikat);
+    let zapis = grafika.frameSave(sciezka);
+    grafika.frameEnd();
+    return zapis;
+}
+
+#{
+    Prosty automat do zrzutów: dla każdego obrotu i kolumny ocenia miejsce lądowania
+    (głębiej lepiej, każde puste pole pod klockiem to kara) i stawia klocek w najlepszym.
+#}
+fun ocena(g: ref model.Gra, k: ref model.Klocek) -> i32 = {
+    var wynik: i32 = 0;
+    var n: i32 = 0;
+    while (n < 4) {
+        let p = model.pole(k.typ, k.obrot, n);
+        let kx = k.x + p.x;
+        let ky = k.y + p.y;
+        wynik += ky * 10;
+        var pod: i32 = ky + 1;
+        var wlasne = false;
+        var m: i32 = 0;
+        while (m < 4) {
+            let q = model.pole(k.typ, k.obrot, m);
+            if (k.x + q.x == kx and k.y + q.y == pod) wlasne = true;
+            m += 1;
+        }
+        if (not wlasne and model.polePlanszy(g, kx, pod) == model.PUSTE) wynik -= 60;
+        n += 1;
+    }
+    return wynik;
+}
+
+fun postawNajlepiej(g: ref model.Gra) -> () = {
+    var najlepszy = g.aktywny;
+    var najlepszaOcena: i32 = -1000000;
+    var obrot: i32 = 0;
+    while (obrot < 4) {
+        var kolumna: i32 = -2;
+        while (kolumna < model.SZER) {
+            var proba = g.aktywny;
+            proba.obrot = obrot;
+            proba.x = kolumna;
+            if (model.pasuje(g, &proba)) {
+                var zapas = g.aktywny;
+                g.aktywny = proba;
+                proba.y += model.wysokoscSpadku(g);
+                g.aktywny = zapas;
+                let o = ocena(g, &proba);
+                if (o > najlepszaOcena) {
+                    najlepszaOcena = o;
+                    najlepszy = proba;
+                }
+            }
+            kolumna += 1;
+        }
+        obrot += 1;
+    }
+    najlepszy.y = g.aktywny.y;
+    g.aktywny = najlepszy;
+    model.twardyZrzut(g);
+}
+
+fun zapiszZrzuty() -> i32 = {
+    var g = model.nowaGra(2026u64);
+    model.schowaj(&g);
+    var n: i32 = 0;
+    while (n < 26 and not g.koniec) { postawNajlepiej(&g); n += 1; }
+    var bledy: i32 = 0;
+    if (zapiszKlatke(&g, "", "zrzuty/gra.png") != grafika.OK) bledy += 1;
+    var k: i32 = 0;
+    while (k < 200 and not g.koniec) { model.twardyZrzut(&g); k += 1; }
+    if (zapiszKlatke(&g, "", "zrzuty/koniec.png") != grafika.OK) bledy += 1;
+    return bledy;
+}
+
+# --- pętla gry -------------------------------------------------------------------------------
+
+fun main() = {
+    if (grafika.windowOpen(OKNO_SZER, OKNO_WYS, "Tetris w Ducklingu") != grafika.OK) {
+        bladNaEkran("Tetris: nie mozna otworzyc okna (brak ekranu albo raylib).\n");
+        return 1;
+    }
+    grafika.setTargetFps(60);
+    if (zrzutyWlaczone()) {
+        let nieZapisane = zapiszZrzuty();
+        grafika.windowClose();
+        if (nieZapisane != 0) {
+            bladNaEkran("Tetris: nie zapisano zrzutow (czy istnieje katalog zrzuty/?).\n");
+            return 1;
+        }
+        return 0;
+    }
+
+    var g = model.nowaGra(grafika.random(1, 2147483646) as u64);
+    var input = grafika.InputState();
+    var komunikat = "";
+    var czasKomunikatu: f32 = 0.0;
+
+    while (not input.closeRequested and not grafika.keyPressed(grafika.KEY_ESCAPE)) {
+        # 1. Wejście: trzymane strzałki i jednorazowe naciśnięcia.
+        grafika.inputPoll(&input);
+        let dt = grafika.frameTime();
+        var ster = model.Sterowanie();
+        ster.lewo = grafika.keyDown(grafika.KEY_LEFT);
+        ster.prawo = grafika.keyDown(grafika.KEY_RIGHT);
+        ster.miekki = grafika.keyDown(grafika.KEY_DOWN);
+        ster.obrotPrawo = grafika.keyPressed(grafika.KEY_UP) or grafika.keyPressed(grafika.KEY_X);
+        ster.obrotLewo = grafika.keyPressed(grafika.KEY_Z);
+        ster.twardy = grafika.keyPressed(grafika.KEY_SPACE);
+        ster.trzymaj = grafika.keyPressed(grafika.KEY_C) or grafika.keyPressed(grafika.KEY_LEFT_SHIFT);
+        if (grafika.keyPressed(grafika.KEY_P) and not g.koniec) g.pauza = not g.pauza;
+        if (grafika.keyPressed(grafika.KEY_R)) {
+            g = model.nowaGra(grafika.random(1, 2147483646) as u64);
+            komunikat = "";
+        }
+
+        # 2. Zmiana stanu gry.
+        model.aktualizuj(&g, dt, &ster);
+        if (g.ostatnieLinie > 0) {
+            komunikat = opisLinii(g.ostatnieLinie);
+            czasKomunikatu = 1.0;
+        }
+        if (czasKomunikatu > 0.0) czasKomunikatu -= dt;
+        if (not (czasKomunikatu > 0.0)) komunikat = "";
+
+        # 3. Rysowanie.
+        grafika.frameBegin(TLO);
+        rysujScene(&g, komunikat);
+        grafika.frameEnd();
+    }
+
+    grafika.windowClose();
+    return 0;
+}

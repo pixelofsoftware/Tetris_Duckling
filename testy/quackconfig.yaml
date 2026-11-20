@@ -1,0 +1,8 @@
+metadata:
+  name: testy_tetrisa
+  version: '1.0.0'
+  license: MIT
+dependencies:
+  tetris_logika:
+    source:
+      path: '../logika'

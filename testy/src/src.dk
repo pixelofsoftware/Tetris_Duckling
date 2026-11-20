@@ -1,0 +1,361 @@
+#{
+    Testy logiki Tetrisa (bez okna): `duck run` w katalogu testy/.
+    Kod wyjścia to liczba nieudanych sprawdzeń (0 = wszystko w porządku).
+#}
+import tetris_logika as model;
+
+var nieudane: i32 = 0;
+var wszystkie: i32 = 0;
+
+fun sprawdz(warunek: bool, opis: str) -> () = {
+    wszystkie += 1;
+    if (warunek) {
+        print(f"  OK    {opis}\n".asSlice());
+    } else {
+        nieudane += 1;
+        print(f"  BLAD  {opis}\n".asSlice());
+    }
+}
+
+fun blisko(a: f32, b: f32, tolerancja: f32) -> bool = {
+    let roznica = a - b;
+    return roznica <= tolerancja and roznica >= -tolerancja;
+}
+
+# Czy klocek typ w obrocie obrot ma pole (x, y) w swojej ramce.
+fun maPole(typ: i32, obrot: i32, px: i32, py: i32) -> bool = {
+    var jest = false;
+    var k: i32 = 0;
+    while (k < 4) {
+        let p = model.pole(typ, obrot, k);
+        if (p.x == px and p.y == py) jest = true;
+        k += 1;
+    }
+    return jest;
+}
+
+fun takieSame(typ: i32, obrotA: i32, obrotB: i32) -> bool = {
+    var zgodne = true;
+    var k: i32 = 0;
+    while (k < 4) {
+        let p = model.pole(typ, obrotA, k);
+        if (not maPole(typ, obrotB, p.x, p.y)) zgodne = false;
+        k += 1;
+    }
+    return zgodne;
+}
+
+fun zapelnijWiersz(g: ref model.Gra, wiersz: i32, odKol: i32, doKol: i32) -> () = {
+    var kol: i32 = odKol;
+    while (kol <= doKol) { model.ustawPole(g, kol, wiersz, model.J); kol += 1; }
+}
+
+fun pustePola(g: ref model.Gra) -> i32 = {
+    var ile: i32 = 0;
+    var i: i64 = 0;
+    while (i < g.plansza.length()) {
+        if (g.plansza.at(i) == model.PUSTE) ile += 1;
+        i += 1;
+    }
+    return ile;
+}
+
+fun nic() -> model.Sterowanie = model.Sterowanie();
+
+fun klatki(g: ref model.Gra, liczba: i32, dt: f32, ster: model.Sterowanie) -> () = {
+    var n: i32 = 0;
+    var s = ster;
+    while (n < liczba) { model.aktualizuj(g, dt, &s); n += 1; }
+}
+
+fun testStartu() -> () = {
+    print("Start gry\n");
+    var g = model.nowaGra(2026u64);
+    sprawdz(g.plansza.length() == 220 and pustePola(&g) == 220, "plansza 10 x 22 (20 widocznych + 2 ukryte) jest pusta");
+    sprawdz(g.punkty == 0 and g.linie == 0 and g.poziom == 1 and not g.koniec, "0 punktow, 0 linii, poziom 1");
+    sprawdz(g.kolejka.length() == 5, "podglad 5 nastepnych klockow");
+    var widoczny = true;
+    var k: i32 = 0;
+    while (k < 4) {
+        let p = model.pole(g.aktywny.typ, g.aktywny.obrot, k);
+        let wy = g.aktywny.y + p.y;
+        if (wy < 2 or wy > 3) widoczny = false;
+        k += 1;
+    }
+    sprawdz(g.aktywny.x == 3 and g.aktywny.obrot == 0 and widoczny, "klocek wchodzi w dwoch gornych widocznych wierszach, od kolumny 3");
+}
+
+fun testKsztaltow() -> () = {
+    print("Ksztalty i obroty\n");
+    var cztery = true;
+    var powrot = true;
+    var t: i32 = 1;
+    while (t <= 7) {
+        var k: i32 = 0;
+        while (k < 4) {
+            var m: i32 = 0;
+            while (m < 4) {
+                if (m != k) {
+                    let a = model.pole(t, 0, k);
+                    let b = model.pole(t, 0, m);
+                    if (a.x == b.x and a.y == b.y) cztery = false;
+                }
+                m += 1;
+            }
+            k += 1;
+        }
+        if (not takieSame(t, 0, 4) or not takieSame(t, 1, 5)) powrot = false;
+        t += 1;
+    }
+    sprawdz(cztery, "kazdy z 7 klockow ma 4 rozne pola");
+    sprawdz(powrot, "4 obroty wracaja do pozycji wyjsciowej");
+    sprawdz(maPole(model.T, 1, 2, 1) and maPole(model.T, 1, 1, 0) and maPole(model.T, 1, 1, 1) and maPole(model.T, 1, 1, 2),
+        "T po obrocie w prawo (stan R) wskazuje w prawo");
+    sprawdz(maPole(model.I, 1, 2, 0) and maPole(model.I, 1, 2, 3), "I w stanie R stoi w trzeciej kolumnie ramki 4x4");
+    sprawdz(takieSame(model.O, 0, 1) and takieSame(model.O, 0, 3), "O po obrocie sie nie zmienia");
+}
+
+fun testWorka() -> () = {
+    print("Losowanie 7-bag\n");
+    var g = model.Gra();
+    g.los = 77u64;
+    var dobre = true;
+    var worek: i32 = 0;
+    while (worek < 3) {
+        var widziane: i32 = 0;   # bit t = klocek t już był w tym worku
+        var n: i32 = 0;
+        while (n < 7) {
+            let t = model.zWorka(&g);
+            if (t < 1 or t > 7) dobre = false;
+            else widziane = widziane | (1 << t);
+            n += 1;
+        }
+        if (widziane != 254) dobre = false;
+        worek += 1;
+    }
+    sprawdz(dobre, "kazde kolejne 7 klockow to wszystkie 7 rodzajow");
+    var s = model.nowaGra(5u64);
+    var pierwsze: i32 = 1 << s.aktywny.typ;
+    var i: i64 = 0;
+    while (i < 5) { pierwsze = pierwsze | (1 << s.kolejka.at(i)); i += 1; }
+    pierwsze = pierwsze | (1 << s.worek.at(0));
+    sprawdz(pierwsze == 254 and s.worek.length() == 1, "pierwszy klocek, 5 w podgladzie i reszta worka to jeden komplet");
+    var a = model.nowaGra(9u64);
+    var b = model.nowaGra(9u64);
+    sprawdz(a.aktywny.typ == b.aktywny.typ and a.kolejka.at(4) == b.kolejka.at(4), "to samo ziarno daje te same klocki");
+}
+
+fun testRuchu() -> () = {
+    print("Ruch w bok\n");
+    var g = model.nowaGra(1u64);
+    g.aktywny = model.Klocek(model.T, 0, 3, 5);
+    var wLewo: i32 = 0;
+    while (model.przesun(&g, -1)) wLewo += 1;
+    sprawdz(wLewo == 3 and g.aktywny.x == 0, "T z kolumny 3 przesuwa sie 3 razy w lewo do sciany");
+    var wPrawo: i32 = 0;
+    while (model.przesun(&g, 1)) wPrawo += 1;
+    sprawdz(wPrawo == 7 and g.aktywny.x == 7, "potem 7 razy w prawo do drugiej sciany");
+    model.ustawPole(&g, 6, 6, model.J);
+    sprawdz(not model.przesun(&g, -1) and g.aktywny.x == 7, "zajete pole blokuje ruch");
+}
+
+fun testObrotow() -> () = {
+    print("Obroty SRS i przesuniecia przy scianach\n");
+    var g = model.nowaGra(1u64);
+    g.aktywny = model.Klocek(model.T, 0, 3, 5);
+    sprawdz(model.obroc(&g, 1) and g.aktywny.obrot == 1 and g.aktywny.x == 3 and g.aktywny.y == 5,
+        "obrot na wolnym polu bez przesuniecia");
+    # T w stanie R przy lewej scianie, obrot w lewo (R->0): test 2 tabeli SRS przesuwa o (+1, 0).
+    g.aktywny = model.Klocek(model.T, 1, -1, 10);
+    sprawdz(model.obroc(&g, -1) and g.aktywny.obrot == 0 and g.aktywny.x == 0 and g.aktywny.y == 10,
+        "T przy lewej scianie: R->0 odbija sie o 1 w prawo");
+    # I pionowe przy prawej scianie, obrot w prawo (R->2): test 2 dla I to (-1, 0).
+    g.aktywny = model.Klocek(model.I, 1, 7, 10);
+    sprawdz(model.obroc(&g, 1) and g.aktywny.obrot == 2 and g.aktywny.x == 6 and g.aktywny.y == 10,
+        "I przy prawej scianie: R->2 odbija sie o 1 w lewo");
+    # I pionowe w studni szerokosci 1: zaden z 5 testow SRS nie znajduje miejsca.
+    var h = model.nowaGra(1u64);
+    h.aktywny = model.Klocek(model.I, 1, 7, 10);
+    var w: i32 = 8;
+    while (w < 22) { zapelnijWiersz(&h, w, 0, 8); w += 1; }
+    sprawdz(not model.obroc(&h, 1) and h.aktywny.obrot == 1 and h.aktywny.x == 7, "obrot bez miejsca sie nie udaje i klocek zostaje");
+    var o = model.nowaGra(1u64);
+    o.aktywny = model.Klocek(model.O, 0, 3, 5);
+    sprawdz(model.obroc(&o, 1) and o.aktywny.x == 3 and o.aktywny.y == 5, "O obraca sie w miejscu, bez przesuniec");
+}
+
+fun testZrzutow() -> () = {
+    print("Zrzuty, cien i punkty za zrzut\n");
+    var g = model.nowaGra(3u64);
+    g.aktywny = model.Klocek(model.T, 0, 3, 2);
+    let c = model.cien(&g);
+    sprawdz(c.y == 20 and c.x == 3, "cien T na pustej planszy lezy na dnie (ramka w wierszu 20)");
+    var nastepny: i32 = g.kolejka.at(0);
+    let spadek = model.wysokoscSpadku(&g);
+    model.twardyZrzut(&g);
+    sprawdz(spadek == 18 and g.punkty == 36, "twardy zrzut: 18 wierszy po 2 punkty = 36");
+    sprawdz(g.klocki == 1 and pustePola(&g) == 216 and model.polePlanszy(&g, 4, 21) == model.T,
+        "klocek zablokowany na dnie");
+    sprawdz(g.aktywny.typ == nastepny and g.aktywny.y <= 2, "wchodzi pierwszy klocek z podgladu");
+    var m = model.nowaGra(3u64);
+    m.aktywny = model.Klocek(model.T, 0, 3, 2);
+    var ster = model.Sterowanie();
+    ster.miekki = true;
+    klatki(&m, 5, 0.1f32, ster);   # 0,5 s, miękki zrzut: 0,05 s na wiersz
+    sprawdz(m.aktywny.y >= 10 and m.punkty == ((m.aktywny.y - 2) as i64), "miekki zrzut: 20 razy szybciej, 1 punkt za wiersz");
+}
+
+fun testGrawitacji() -> () = {
+    print("Grawitacja i poziomy predkosci\n");
+    sprawdz(blisko(model.czasNaWiersz(1), 1.0, 0.0001f32), "poziom 1: 1 s na wiersz");
+    sprawdz(blisko(model.czasNaWiersz(10), 0.06415f32, 0.0005f32), "poziom 10: (0,8 - 9 * 0,007)^9 = 0,064 s");
+    sprawdz(blisko(model.czasNaWiersz(15), 0.00706f32, 0.0002f32), "poziom 15: 0,007 s (ponad 2 wiersze na klatke)");
+    var g = model.nowaGra(4u64);
+    let startY = g.aktywny.y;
+    klatki(&g, 11, 0.09f32, nic());   # 0,99 s
+    sprawdz(g.aktywny.y == startY, "po 0,99 s klocek jeszcze nie spadl");
+    klatki(&g, 1, 0.02f32, nic());    # 1,01 s
+    sprawdz(g.aktywny.y == startY + 1, "po 1,01 s spadl o jeden wiersz");
+    g.pauza = true;
+    klatki(&g, 30, 0.1f32, nic());
+    sprawdz(g.aktywny.y == startY + 1, "w pauzie nic nie spada");
+}
+
+fun testBlokady() -> () = {
+    print("Opoznienie blokady\n");
+    var g = model.nowaGra(6u64);
+    g.aktywny = model.Klocek(model.T, 0, 3, 20);   # leży na dnie
+    klatki(&g, 4, 0.1f32, nic());
+    sprawdz(g.klocki == 0, "po 0,4 s lezacy klocek jeszcze nie jest zablokowany");
+    klatki(&g, 1, 0.1f32, nic());
+    sprawdz(g.klocki == 1, "po 0,5 s zostaje zablokowany");
+
+    var r = model.nowaGra(6u64);
+    r.aktywny = model.Klocek(model.T, 0, 3, 20);
+    klatki(&r, 4, 0.1f32, nic());
+    model.przesun(&r, -1);
+    klatki(&r, 4, 0.1f32, nic());
+    sprawdz(r.klocki == 0, "ruch lezacego klocka odnawia czas blokady");
+    klatki(&r, 1, 0.1f32, nic());
+    sprawdz(r.klocki == 1, "0,5 s po ostatnim ruchu klocek sie blokuje");
+
+    var m = model.nowaGra(6u64);
+    m.aktywny = model.Klocek(model.T, 0, 3, 20);
+    var ruch: i32 = 0;
+    while (ruch < 15) {
+        klatki(&m, 3, 0.1f32, nic());
+        if (ruch % 2 == 0) model.przesun(&m, -1);
+        else model.przesun(&m, 1);
+        ruch += 1;
+    }
+    sprawdz(m.klocki == 0 and m.resetyBlokady == 15, "15 odnowien: po 4,5 s klocek wciaz w grze");
+    klatki(&m, 3, 0.1f32, nic());
+    model.przesun(&m, -1);   # 16. ruch już nie odnawia czasu
+    klatki(&m, 3, 0.1f32, nic());
+    sprawdz(m.klocki == 1, "16. ruch nie odnawia blokady: klocek sie blokuje");
+}
+
+fun testLinii() -> () = {
+    print("Usuwanie linii i punkty\n");
+    var g = model.nowaGra(8u64);
+    zapelnijWiersz(&g, 21, 0, 5);
+    model.ustawPole(&g, 0, 20, model.L);   # znacznik nad linią
+    g.aktywny = model.Klocek(model.I, 0, 6, 1);   # I poziome, pola w wierszu 2, kolumny 6..9
+    let spadek = model.wysokoscSpadku(&g);
+    model.twardyZrzut(&g);
+    sprawdz(g.linie == 1 and g.ostatnieLinie == 1, "pojedyncza linia usunieta");
+    sprawdz(g.punkty == 100 + (2 * spadek) as i64, "single na poziomie 1: 100 punktow (plus zrzut)");
+    sprawdz(model.polePlanszy(&g, 0, 21) == model.L and model.polePlanszy(&g, 6, 21) == model.PUSTE,
+        "wiersze nad usunieta linia przesuwaja sie w dol");
+
+    var t = model.nowaGra(8u64);
+    var w: i32 = 18;
+    while (w < 22) { zapelnijWiersz(&t, w, 1, 9); w += 1; }
+    t.aktywny = model.Klocek(model.I, 1, -2, 2);   # I pionowe w kolumnie 0, wiersze 2..5
+    model.twardyZrzut(&t);
+    sprawdz(t.linie == 4 and t.ostatnieLinie == 4 and pustePola(&t) == 220,
+        "TETRIS: 4 linie naraz, plansza zupelnie czysta");
+    sprawdz(t.punkty == 800 + 32, "tetris na poziomie 1: 800 punktow (plus 16 wierszy zrzutu)");
+
+    var p = model.nowaGra(8u64);
+    p.linie = 9;
+    zapelnijWiersz(&p, 21, 0, 5);
+    p.aktywny = model.Klocek(model.I, 0, 6, 20);   # od razu na miejscu, bez punktów za zrzut
+    model.twardyZrzut(&p);
+    sprawdz(p.linie == 10 and p.poziom == 2 and p.punkty == 100, "10. linia: poziom 2 (ta linia liczona jeszcze z poziomu 1)");
+    zapelnijWiersz(&p, 21, 0, 5);
+    p.aktywny = model.Klocek(model.I, 0, 6, 20);
+    model.twardyZrzut(&p);
+    sprawdz(p.punkty == 300, "single na poziomie 2: 200 punktow");
+}
+
+fun testSchowka() -> () = {
+    print("Schowek (hold)\n");
+    var g = model.nowaGra(10u64);
+    let pierwszy = g.aktywny.typ;
+    var drugi: i32 = g.kolejka.at(0);
+    sprawdz(model.schowaj(&g) and g.schowek == pierwszy and g.aktywny.typ == drugi, "pusty schowek: klocek do schowka, wchodzi nastepny");
+    sprawdz(not model.schowaj(&g) and g.schowek == pierwszy, "drugi raz przed zablokowaniem nie mozna");
+    model.twardyZrzut(&g);
+    let trzeci = g.aktywny.typ;
+    sprawdz(model.schowaj(&g) and g.aktywny.typ == pierwszy and g.schowek == trzeci and g.aktywny.x == 3,
+        "po zablokowaniu: zamiana z klockiem ze schowka, od miejsca startu");
+}
+
+fun testKonca() -> () = {
+    print("Koniec gry\n");
+    var g = model.nowaGra(12u64);
+    var w: i32 = 1;
+    while (w < 4) { zapelnijWiersz(&g, w, 3, 6); w += 1; }
+    model.wstaw(&g, model.T);
+    sprawdz(g.koniec, "block out: nowy klocek nie ma miejsca");
+    let punktyPrzed = g.punkty;
+    var ster = model.Sterowanie();
+    ster.twardy = true;
+    klatki(&g, 3, 0.1f32, ster);
+    sprawdz(g.punkty == punktyPrzed and g.klocki == 0, "po koncu gry nic sie nie dzieje");
+
+    var z = model.nowaGra(12u64);
+    var wi: i32 = 2;
+    while (wi < 22) { model.ustawPole(&z, 4, wi, model.J); model.ustawPole(&z, 5, wi, model.J); wi += 1; }
+    z.aktywny = model.Klocek(model.O, 0, 3, 0);   # O w ukrytych wierszach 0-1
+    model.twardyZrzut(&z);
+    sprawdz(z.koniec, "lock out: klocek zablokowany caly nad plansza konczy gre");
+}
+
+fun testPrzytrzymania() -> () = {
+    print("Przytrzymanie strzalki (DAS)\n");
+    var g = model.nowaGra(14u64);
+    g.aktywny = model.Klocek(model.T, 0, 3, 5);
+    var lewo = model.Sterowanie();
+    lewo.lewo = true;
+    klatki(&g, 1, 0.016f32, lewo);
+    sprawdz(g.aktywny.x == 2, "nacisniecie: od razu jeden krok");
+    klatki(&g, 8, 0.016f32, lewo);   # razem 0,144 s < 0,17 s
+    sprawdz(g.aktywny.x == 2, "przed uplywem DAS klocek stoi");
+    klatki(&g, 10, 0.016f32, lewo);  # razem 0,304 s
+    sprawdz(g.aktywny.x == 0, "po DAS sunie co 0,05 s az do sciany");
+    klatki(&g, 1, 0.016f32, nic());
+    var prawo = model.Sterowanie();
+    prawo.prawo = true;
+    klatki(&g, 1, 0.016f32, prawo);
+    sprawdz(g.aktywny.x == 1, "puszczenie i nowe nacisniecie: znow od razu jeden krok");
+}
+
+fun main() -> i64 = {
+    print("Testy logiki: Tetris\n");
+    testStartu();
+    testKsztaltow();
+    testWorka();
+    testRuchu();
+    testObrotow();
+    testZrzutow();
+    testGrawitacji();
+    testBlokady();
+    testLinii();
+    testSchowka();
+    testKonca();
+    testPrzytrzymania();
+    print(f"Wynik: {wszystkie - nieudane}/{wszystkie} sprawdzen udanych\n".asSlice());
+    return nieudane as i64;
+}
