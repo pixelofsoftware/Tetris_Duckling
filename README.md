@@ -47,6 +47,16 @@ Wymagania:
 * Xcode Command Line Tools (git, make, clang);
 * repozytorium duckling-biblioteki, gałąź `paczki-duck`, domyślnie w `~/duckling-biblioteki` (inna ścieżka: `./przygotuj_macos.sh /ścieżka`).
 
+### Gotowy build (macOS, Apple Silicon)
+
+W repozytorium jest zbudowana gra: `gra/.duck_build/dev/tetris_gra` razem z biblioteką `libraylib.dylib` (raylib 5.5, licencja zlib/libpng w `LICENSE-raylib.txt`). Plik gry szuka raylib obok siebie (`@executable_path`), więc nie potrzebuje Ducklinga, `zewnetrzne/` ani konkretnej ścieżki repozytorium:
+
+```sh
+gra/.duck_build/dev/tetris_gra
+```
+
+Po pobraniu repozytorium jako ZIP (zamiast `git clone`) macOS może zablokować nieznany program; wtedy jednorazowo: `xattr -dr com.apple.quarantine gra/.duck_build`. Uwaga: `./uruchom.sh` buduje grę od nowa w tym samym katalogu i nadpisuje plik gry wersją, która korzysta z raylib w `zewnetrzne/`.
+
 ## Struktura
 
 ```
