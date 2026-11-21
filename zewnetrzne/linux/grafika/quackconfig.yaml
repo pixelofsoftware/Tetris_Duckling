@@ -1,0 +1,8 @@
+metadata:
+  name: grafika
+  version: '0.1.0'
+  license: MIT
+  description: Okno, rysowanie, wejście i dźwięk dla gier 2D na raylib 5.5
+  # raylib 5.5 zbudowana skryptem zbuduj_raylib.py; GL i X11 pochodzą z systemu.
+  external-libs: [raylib, GL, X11]
+  external-lib-paths: [zewnetrzne/lib]
