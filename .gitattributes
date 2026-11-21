@@ -5,3 +5,6 @@
 # Skrypty pomocnicze (budowanie, uruchamianie, narzędzia) nie wliczają się do statystyk języków.
 *.py linguist-vendored
 *.sh linguist-vendored
+# Kod projektu jest w Ducklingu (.dk). GitHub Linguist nie zna jeszcze tego języka; gdy go
+# doda, pliki .dk zostaną rozpoznane po rozszerzeniu, a ta linia nazywa język jawnie.
+*.dk linguist-language=Duckling
