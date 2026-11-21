@@ -1,5 +1,7 @@
 # Tetris w Ducklingu
 
+![Napisane w Duckling](https://img.shields.io/badge/napisane%20w-Duckling-f2c94c)
+
 Tetris napisany w Ducklingu, z zasadami według **Tetris Guideline**, czyli specyfikacji, której trzymają się oficjalne gry Tetris od 2001 roku. Okno, klawiatura i rysowanie korzystają z pakietu `grafika` (raylib 5.5) z [duckling-biblioteki](https://github.com/andr729/duckling-biblioteki).
 
 ![Rozgrywka](zrzuty/gra.png)
