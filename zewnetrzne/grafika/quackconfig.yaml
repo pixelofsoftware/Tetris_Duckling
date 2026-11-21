@@ -1,0 +1,7 @@
+metadata:
+  name: grafika
+  version: '0.1.0'
+  license: MIT
+  description: Pakiet grafika z duckling-biblioteki w wersji dla macOS (raylib 5.5, opis w zewnetrzne/README.md)
+  external-libs: [raylib]
+  external-lib-paths: [../raylib/lib]

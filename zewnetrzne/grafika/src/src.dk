@@ -1,0 +1,1288 @@
+#{
+    grafika: okno, rysowanie, wejście i dźwięk dla gier 2D na raylib 5.5.
+
+    Każda operacja zwraca status (OK albo jeden z kodów poniżej); operacje tworzące
+    zasób zwracają krotkę (status, uchwyt). Uchwyt jest ważny do zwolnienia zasobu:
+    po zwolnieniu ta sama liczba daje HANDLE. Tekst i ścieżki muszą być poprawnym UTF-8
+    bez znaku NUL, najwyżej 4096 bajtów. Kolory są w formacie 0xRRGGBBAA.
+
+    Okno i jego zasoby (tekstury, fonty) działają tylko przy otwartym oknie, a rysowanie
+    tylko między frameBegin i frameEnd. Dźwięki wymagają audioOpen.
+#}
+import core.builtins as builtins;
+import core.containers.*;
+
+const OK: i32 = 0i32;
+const STATE: i32 = 1i32;
+const VALUE: i32 = 2i32;
+const HANDLE: i32 = 3i32;
+const TYPE: i32 = 4i32;
+const LOAD: i32 = 5i32;
+const BUSY: i32 = 6i32;
+const UTF8: i32 = 7i32;
+const IO: i32 = 8i32;
+const LIMIT: i32 = 9i32;
+const BACKEND: i32 = 10i32;
+
+# Klawisze w maskach InputState: A=1, SPACE=2, D=4, P=8, N=16, ESCAPE=32.
+# Pozostałe klawisze sprawdzają keyDown, keyPressed i keyReleased ze stałymi KEY_*.
+const KEY_MASK_A: i32 = 1i32;
+const KEY_MASK_SPACE: i32 = 2i32;
+const KEY_MASK_D: i32 = 4i32;
+const KEY_MASK_P: i32 = 8i32;
+const KEY_MASK_N: i32 = 16i32;
+const KEY_MASK_ESCAPE: i32 = 32i32;
+
+#{
+    Kody klawiszy dla keyDown, keyPressed i keyReleased (wartości z raylib.h).
+    Litery i cyfry mają kody ASCII wielkich liter i cyfr, np. KEY_W = 87.
+#}
+const KEY_SPACE: i32 = 32i32;
+const KEY_ESCAPE: i32 = 256i32;
+const KEY_ENTER: i32 = 257i32;
+const KEY_TAB: i32 = 258i32;
+const KEY_BACKSPACE: i32 = 259i32;
+const KEY_RIGHT: i32 = 262i32;
+const KEY_LEFT: i32 = 263i32;
+const KEY_DOWN: i32 = 264i32;
+const KEY_UP: i32 = 265i32;
+const KEY_LEFT_SHIFT: i32 = 340i32;
+const KEY_LEFT_CONTROL: i32 = 341i32;
+const KEY_RIGHT_SHIFT: i32 = 344i32;
+const KEY_RIGHT_CONTROL: i32 = 345i32;
+const KEY_ZERO: i32 = 48i32;
+const KEY_ONE: i32 = 49i32;
+const KEY_TWO: i32 = 50i32;
+const KEY_THREE: i32 = 51i32;
+const KEY_FOUR: i32 = 52i32;
+const KEY_FIVE: i32 = 53i32;
+const KEY_SIX: i32 = 54i32;
+const KEY_SEVEN: i32 = 55i32;
+const KEY_EIGHT: i32 = 56i32;
+const KEY_NINE: i32 = 57i32;
+const KEY_A: i32 = 65i32;
+const KEY_B: i32 = 66i32;
+const KEY_C: i32 = 67i32;
+const KEY_D: i32 = 68i32;
+const KEY_E: i32 = 69i32;
+const KEY_F: i32 = 70i32;
+const KEY_G: i32 = 71i32;
+const KEY_H: i32 = 72i32;
+const KEY_I: i32 = 73i32;
+const KEY_J: i32 = 74i32;
+const KEY_K: i32 = 75i32;
+const KEY_L: i32 = 76i32;
+const KEY_M: i32 = 77i32;
+const KEY_N: i32 = 78i32;
+const KEY_O: i32 = 79i32;
+const KEY_P: i32 = 80i32;
+const KEY_Q: i32 = 81i32;
+const KEY_R: i32 = 82i32;
+const KEY_S: i32 = 83i32;
+const KEY_T: i32 = 84i32;
+const KEY_U: i32 = 85i32;
+const KEY_V: i32 = 86i32;
+const KEY_W: i32 = 87i32;
+const KEY_X: i32 = 88i32;
+const KEY_Y: i32 = 89i32;
+const KEY_Z: i32 = 90i32;
+
+#{ Przyciski myszy w maskach InputState.mouseDown, mousePressed i mouseReleased. #}
+const MOUSE_LEFT: i32 = 1i32;
+const MOUSE_RIGHT: i32 = 2i32;
+const MOUSE_MIDDLE: i32 = 4i32;
+
+#{ Gotowe kolory w formacie 0xRRGGBBAA (te same co w raylib). #}
+const WHITE: u32 = 0xffffffffu32;
+const BLACK: u32 = 0x000000ffu32;
+const GRAY: u32 = 0x828282ffu32;
+const DARKGRAY: u32 = 0x505050ffu32;
+const RED: u32 = 0xe62937ffu32;
+const ORANGE: u32 = 0xffa100ffu32;
+const YELLOW: u32 = 0xfdf900ffu32;
+const GREEN: u32 = 0x00e430ffu32;
+const DARKGREEN: u32 = 0x00752cffu32;
+const SKYBLUE: u32 = 0x66bfffffu32;
+const BLUE: u32 = 0x0079f1ffu32;
+const PURPLE: u32 = 0xc87affffu32;
+const BROWN: u32 = 0x7f6a4fffu32;
+
+# Hack: Duckling has no null cptr literal and rejects integer-to-pointer casts
+# (`0u64 as ptr T` is an invalid cast), so we read a zero u64 through a pointer
+# to a cptr. Note: we could probably drop this once the language gets a null literal.
+template(T: type)
+fun nullPointer() -> cptr T = {
+    var zero: u64 = 0u64;
+    return (&zero as cptr (cptr T))[0];
+}
+
+extern("C") {
+    class Color { r: u8 = 0u8; g: u8 = 0u8; b: u8 = 0u8; a: u8 = 0u8; }
+    class Vector2 { x: f32 = 0.0f32; y: f32 = 0.0f32; }
+    class Rectangle { x: f32 = 0.0f32; y: f32 = 0.0f32; width: f32 = 0.0f32; height: f32 = 0.0f32; }
+    class Image { data: cptr u8 = nullPointer[u8](); width: i32 = 0i32; height: i32 = 0i32; mipmaps: i32 = 0i32; format: i32 = 0i32; }
+    class Texture { id: u32 = 0u32; width: i32 = 0i32; height: i32 = 0i32; mipmaps: i32 = 0i32; format: i32 = 0i32; }
+    class RenderTexture { id: u32 = 0u32; texture: Texture = Texture(); depth: Texture = Texture(); }
+    class GlyphInfo { value: i32 = 0i32; offsetX: i32 = 0i32; offsetY: i32 = 0i32; advanceX: i32 = 0i32; image: Image = Image(); }
+    class Font {
+        baseSize: i32 = 0i32; glyphCount: i32 = 0i32; glyphPadding: i32 = 0i32; texture: Texture = Texture();
+        recs: cptr Rectangle = nullPointer[Rectangle](); glyphs: cptr GlyphInfo = nullPointer[GlyphInfo]();
+    }
+    class AudioStream { buffer: cptr u8 = nullPointer[u8](); processor: cptr u8 = nullPointer[u8](); sampleRate: u32 = 0u32; sampleSize: u32 = 0u32; channels: u32 = 0u32; }
+    class Sound { stream: AudioStream = AudioStream(); frameCount: u32 = 0u32; }
+    class Music { stream: AudioStream = AudioStream(); frameCount: u32 = 0u32; looping: bool = false; ctxType: i32 = 0i32; ctxData: cptr u8 = nullPointer[u8](); }
+    class Timespec { seconds: i64 = 0i64; nanoseconds: i64 = 0i64; }
+    class PollFd { fd: i32 = 0i32; events: i16 = 0i16; revents: i16 = 0i16; }
+
+    namespace raylib {
+        fundecl SetTraceLogLevel(level: i32) -> ();
+        fundecl SetTargetFPS(fps: i32) -> ();
+        fundecl GetTime() -> f64;
+        fundecl InitWindow(width: i32, height: i32, title: cptr char) -> ();
+        fundecl IsWindowReady() -> bool;
+        fundecl CloseWindow() -> ();
+        fundecl WindowShouldClose() -> bool;
+        fundecl SetExitKey(key: i32) -> ();
+        fundecl GetScreenWidth() -> i32;
+        fundecl GetScreenHeight() -> i32;
+        fundecl SetMouseScale(x: f32, y: f32) -> ();
+        fundecl BeginDrawing() -> ();
+        fundecl EndDrawing() -> ();
+        fundecl BeginTextureMode(target: RenderTexture) -> ();
+        fundecl EndTextureMode() -> ();
+        fundecl ClearBackground(color: Color) -> ();
+        fundecl DrawRectangle(x: i32, y: i32, width: i32, height: i32, color: Color) -> ();
+        fundecl DrawCircle(x: i32, y: i32, radius: f32, color: Color) -> ();
+        fundecl DrawTriangle(a: Vector2, b: Vector2, c: Vector2, color: Color) -> ();
+        fundecl DrawLineEx(start: Vector2, end: Vector2, thickness: f32, color: Color) -> ();
+        fundecl DrawRectangleLinesEx(rectangle: Rectangle, thickness: f32, color: Color) -> ();
+        fundecl DrawRectanglePro(rectangle: Rectangle, origin: Vector2, rotation: f32, color: Color) -> ();
+        fundecl DrawCircleLines(x: i32, y: i32, radius: f32, color: Color) -> ();
+        fundecl DrawText(text: cptr char, x: i32, y: i32, size: i32, color: Color) -> ();
+        fundecl MeasureText(text: cptr char, size: i32) -> i32;
+        fundecl GetFrameTime() -> f32;
+        fundecl GetFPS() -> i32;
+        fundecl GetRandomValue(min: i32, max: i32) -> i32;
+        fundecl SetRandomSeed(seed: u32) -> ();
+        fundecl DrawTexture(texture: Texture, x: i32, y: i32, tint: Color) -> ();
+        fundecl DrawTexturePro(texture: Texture, source: Rectangle, dest: Rectangle, origin: Vector2, rotation: f32, tint: Color) -> ();
+        fundecl DrawTextEx(font: Font, text: cptr char, position: Vector2, size: f32, spacing: f32, tint: Color) -> ();
+        fundecl MeasureTextEx(font: Font, text: cptr char, size: f32, spacing: f32) -> Vector2;
+        fundecl LoadRenderTexture(width: i32, height: i32) -> RenderTexture;
+        fundecl IsRenderTextureValid(target: RenderTexture) -> bool;
+        fundecl UnloadRenderTexture(target: RenderTexture) -> ();
+        fundecl SetTextureFilter(texture: Texture, filter: i32) -> ();
+        fundecl LoadTexture(path: cptr char) -> Texture;
+        fundecl IsTextureValid(texture: Texture) -> bool;
+        fundecl UnloadTexture(texture: Texture) -> ();
+        fundecl LoadImageFromTexture(texture: Texture) -> Image;
+        fundecl LoadImageFromScreen() -> Image;
+        fundecl ImageFlipVertical(image: cptr Image) -> ();
+        fundecl IsImageValid(image: Image) -> bool;
+        fundecl ExportImage(image: Image, path: cptr char) -> bool;
+        fundecl UnloadImage(image: Image) -> ();
+        fundecl rlDrawRenderBatchActive() -> ();
+        fundecl LoadFontEx(path: cptr char, size: i32, codepoints: cptr i32, count: i32) -> Font;
+        fundecl GetFontDefault() -> Font;
+        fundecl IsFontValid(font: Font) -> bool;
+        fundecl UnloadFont(font: Font) -> ();
+        fundecl GetKeyPressed() -> i32;
+        fundecl GetCharPressed() -> i32;
+        fundecl IsKeyDown(key: i32) -> bool;
+        fundecl IsMouseButtonDown(button: i32) -> bool;
+        fundecl GetMouseX() -> i32;
+        fundecl GetMouseY() -> i32;
+        fundecl GetMouseWheelMove() -> f32;
+        fundecl PollInputEvents() -> ();
+        fundecl InitAudioDevice() -> ();
+        fundecl CloseAudioDevice() -> ();
+        fundecl IsAudioDeviceReady() -> bool;
+        fundecl SetMasterVolume(volume: f32) -> ();
+        fundecl SetAudioStreamBufferSizeDefault(size: i32) -> ();
+        fundecl LoadSound(path: cptr char) -> Sound;
+        fundecl IsSoundValid(sound: Sound) -> bool;
+        fundecl UnloadSound(sound: Sound) -> ();
+        fundecl PlaySound(sound: Sound) -> ();
+        fundecl StopSound(sound: Sound) -> ();
+        fundecl SetSoundVolume(sound: Sound, volume: f32) -> ();
+        fundecl LoadMusicStream(path: cptr char) -> Music;
+        fundecl IsMusicValid(music: Music) -> bool;
+        fundecl UnloadMusicStream(music: Music) -> ();
+        fundecl PlayMusicStream(music: Music) -> ();
+        fundecl StopMusicStream(music: Music) -> ();
+        fundecl UpdateMusicStream(music: Music) -> ();
+        fundecl SetMusicVolume(music: Music, volume: f32) -> ();
+        fundecl LoadAudioStream(sampleRate: u32, sampleSize: u32, channels: u32) -> AudioStream;
+        fundecl IsAudioStreamValid(stream: AudioStream) -> bool;
+        fundecl UnloadAudioStream(stream: AudioStream) -> ();
+        fundecl PlayAudioStream(stream: AudioStream) -> ();
+        fundecl StopAudioStream(stream: AudioStream) -> ();
+        fundecl IsAudioStreamPlaying(stream: AudioStream) -> bool;
+        fundecl IsAudioStreamProcessed(stream: AudioStream) -> bool;
+        fundecl UpdateAudioStream(stream: AudioStream, data: cptr u8, frames: i32) -> ();
+        fundecl SetAudioStreamVolume(stream: AudioStream, volume: f32) -> ();
+    }
+    namespace libc {
+        fundecl getenv(name: cptr char) -> cptr char;
+        fundecl strcmp(a: cptr char, b: cptr char) -> i32;
+        fundecl fflush(stream: u64) -> i32;
+        fundecl clock_gettime(clock: i32, value: cptr Timespec) -> i32;
+        fundecl nanosleep(request: cptr Timespec, remaining: cptr Timespec) -> i32;
+        fundecl poll(fds: cptr PollFd, count: u64, timeout: i32) -> i32;
+        fundecl read(fd: i32, data: cptr u8, size: u64) -> i64;
+        fundecl __error() -> cptr i32;
+    }
+}
+
+# raylib constants used here (raylib.h 5.5).
+const LOG_NONE: i32 = 7i32;
+const KEY_NULL: i32 = 0i32;
+const MOUSE_BUTTON_LEFT: i32 = 0i32;
+const MOUSE_BUTTON_RIGHT: i32 = 1i32;
+const MOUSE_BUTTON_MIDDLE: i32 = 2i32;
+const FILTER_POINT: i32 = 0i32;
+const FILTER_BILINEAR: i32 = 1i32;
+const EINTR: i32 = 4i32;
+const SLOT_COUNT: i64 = 64i64;
+const TEXT_LIMIT: i64 = 4096i64;
+
+# Kinds of slots; textures and fonts belong to the window, the rest to the audio device.
+const EMPTY: i32 = 0i32;
+const TEXTURE: i32 = 1i32;
+const FONT: i32 = 2i32;
+const SOUND: i32 = 3i32;
+const MUSIC: i32 = 4i32;
+const STREAM: i32 = 5i32;
+
+class Slot {
+    generation: u32 = 0u32;
+    kind: i32 = EMPTY;
+    retired: bool = false;
+    streamStaged: bool = false;
+    streamVolume: f32 = 1.0f32;
+    texture: Texture = Texture();
+    font: Font = Font();
+    sound: Sound = Sound();
+    music: Music = Music();
+    stream: AudioStream = AudioStream();
+}
+
+fun emptySlots() -> List[Slot] = {
+    var slots: List[Slot];
+    return slots;
+}
+
+# Index by raylib key code; raylib 5.5 key codes are below 349 (KEY_KB_MENU = 348).
+const KEY_COUNT: i64 = 349i64;
+const KEY_FLAG_DOWN: u8 = 1u8;
+const KEY_FLAG_PRESSED: u8 = 2u8;
+const KEY_FLAG_RELEASED: u8 = 4u8;
+const KEY_FLAG_QUEUED: u8 = 8u8;
+
+fun emptyKeyFlags() -> List[u8] = {
+    var flags: List[u8];
+    return flags;
+}
+
+fun emptyChars() -> List[u32] = {
+    var chars: List[u32];
+    return chars;
+}
+
+class State {
+    slots: List[Slot] = emptySlots();
+    windowOpen: bool = false;
+    frameOpen: bool = false;
+    audioOpen: bool = false;
+    pendingClose: bool = false;
+    pendingKeyPresses: i32 = 0i32;
+    previousKeys: i32 = 0i32;
+    previousMouse: i32 = 0i32;
+    # Per-key flags for keyDown/keyPressed/keyReleased; see KEY_FLAG_*.
+    keyFlags: List[u8] = emptyKeyFlags();
+    # Optional half-size presentation; drawing and input stay in logical pixels.
+    canvas: RenderTexture = RenderTexture();
+    logicalWidth: i32 = 0i32;
+    logicalHeight: i32 = 0i32;
+}
+
+var state: State = State();
+
+#{
+    Stan wejścia z jednego wywołania inputPoll. Maski klawiszy opisują stałe KEY_MASK_*,
+    a maski myszy MOUSE_LEFT, MOUSE_RIGHT i MOUSE_MIDDLE. keysPressed zbiera naciśnięcia
+    od poprzedniego udanego inputPoll, także te z frameEnd.
+#}
+class InputState {
+    keysDown: i32 = 0i32;
+    keysPressed: i32 = 0i32;
+    keysReleased: i32 = 0i32;
+    mouseDown: i32 = 0i32;
+    mousePressed: i32 = 0i32;
+    mouseReleased: i32 = 0i32;
+    mouseX: i32 = 0i32;
+    mouseY: i32 = 0i32;
+    wheel: f32 = 0.0f32;
+    closeRequested: bool = false;
+    chars: List[u32] = emptyChars();
+}
+
+#{ Liczby otwartych zasobów i stan okna oraz dźwięku; do sprawdzania sprzątania. #}
+class Counts {
+    textures: i32 = 0i32;
+    fonts: i32 = 0i32;
+    sounds: i32 = 0i32;
+    music: i32 = 0i32;
+    streams: i32 = 0i32;
+    windowOpen: bool = false;
+    audioOpen: bool = false;
+}
+
+fun ensureSlots() -> () = {
+    while (state.slots.length() < SLOT_COUNT) state.slots.push(Slot());
+    while (state.keyFlags.length() < KEY_COUNT) state.keyFlags.push(0u8);
+}
+
+fun clearKeyFlags() -> () = {
+    ensureSlots();
+    var k: i64 = 0i64;
+    while (k < KEY_COUNT) { state.keyFlags.at(k) = 0u8; k += 1i64; }
+}
+
+fun color(rgba: u32) -> Color = {
+    return Color((rgba >> 24u32) as u8, ((rgba >> 16u32) & 255u32) as u8,
+        ((rgba >> 8u32) & 255u32) as u8, (rgba & 255u32) as u8);
+}
+
+fun finite(value: f32) -> bool = {
+    return value == value and value <= 3.4028234663852886e38f32 and value >= -3.4028234663852886e38f32;
+}
+
+# Tuples are built only from parameters: a `let` local or a global constant inside
+# a returned tuple literal makes the LLVM backend fail module verification.
+fun handle(status: i32, token: u64) -> (i32, u64) = { return (status, token); }
+fun ready(status: i32, value: bool) -> (i32, bool) = { return (status, value); }
+fun measurement(status: i32, width: f32, height: f32) -> (i32, f32, f32) = { return (status, width, height); }
+
+fun cString(text: str) -> String = {
+    var result: String;
+    result.append(text);
+    result.append('\0');
+    return result;
+}
+
+fun pointerOf(text: ref String) -> cptr char = {
+    return builtins.ptr_from_slice[char](text.asSlice()) as cptr char;
+}
+
+# Polish letters accepted by fonts and text drawing besides printable ASCII.
+fun polishCodepoint(index: i32) -> i32 = {
+    let table: i32[18] = [0x104i32, 0x106i32, 0x118i32, 0x141i32, 0x143i32, 0xd3i32, 0x15ai32, 0x179i32, 0x17bi32,
+        0x105i32, 0x107i32, 0x119i32, 0x142i32, 0x144i32, 0xf3i32, 0x15bi32, 0x17ai32, 0x17ci32];
+    return table[index];
+}
+
+fun isPolish(cp: u32) -> bool = {
+    var found = false;
+    var k: i32 = 0i32;
+    while (k < 18i32) {
+        if (cp == polishCodepoint(k) as u32) found = true;
+        k += 1i32;
+    }
+    return found;
+}
+
+# Strict UTF-8 validation without NUL; with glyphs, only characters present in loaded fonts.
+fun checkText(text: str, glyphs: bool) -> i32 = {
+    let n: i64 = text.length();
+    if (n > TEXT_LIMIT) return LIMIT;
+    var status = OK;
+    var i: i64 = 0i64;
+    while (status == OK and i < n) {
+        var cp: u32 = text[i] as u32;
+        i += 1i64;
+        var tail: i64 = 0i64;
+        var minimum: u32 = 0u32;
+        if (cp == 0u32) status = UTF8;
+        else if (cp >= 0xc2u32 and cp <= 0xdfu32) { cp = cp & 31u32; tail = 1i64; minimum = 0x80u32; }
+        else if (cp >= 0xe0u32 and cp <= 0xefu32) { cp = cp & 15u32; tail = 2i64; minimum = 0x800u32; }
+        else if (cp >= 0xf0u32 and cp <= 0xf4u32) { cp = cp & 7u32; tail = 3i64; minimum = 0x10000u32; }
+        else if (cp >= 0x80u32) status = UTF8;
+        if (status == OK and tail > n - i) status = UTF8;
+        while (status == OK and tail > 0i64) {
+            let next: u32 = text[i] as u32;
+            i += 1i64;
+            tail -= 1i64;
+            if ((next & 0xc0u32) != 0x80u32) status = UTF8;
+            cp = (cp << 6u32) | (next & 63u32);
+        }
+        if (status == OK and (cp < minimum or cp > 0x10ffffu32 or (cp >= 0xd800u32 and cp <= 0xdfffu32))) status = UTF8;
+        if (status == OK and glyphs and not (cp >= 32u32 and cp <= 126u32) and not isPolish(cp)) status = VALUE;
+    }
+    return status;
+}
+
+# kind TEXTURE/FONT needs the window; frame: 1 inside a frame, 0 outside, -1 either.
+fun session(kind: i32, frame: i32) -> i32 = {
+    if (kind <= FONT) {
+        if (not state.windowOpen) return STATE;
+        if (frame == 1i32 and not state.frameOpen) return STATE;
+        if (frame == 0i32 and state.frameOpen) return STATE;
+        return OK;
+    }
+    if (not state.audioOpen) return STATE;
+    return OK;
+}
+
+# Index of the slot named by a token, or a negative status.
+fun lookup(token: u64, kind: i32) -> i64 = {
+    ensureSlots();
+    let index1: u64 = token & 0xffffffffu64;
+    let generation: u32 = (token >> 32u64) as u32;
+    if (index1 == 0u64 or index1 > SLOT_COUNT as u64 or generation == 0u32) return -(HANDLE as i64);
+    let index: i64 = index1 as i64 - 1i64;
+    let slot = state.slots.at(index);
+    if (slot.kind == EMPTY or slot.generation != generation) return -(HANDLE as i64);
+    if (slot.kind != kind) return -(TYPE as i64);
+    return index;
+}
+
+# Check the session and the token; returns the slot index or a negative status.
+fun resource(token: u64, kind: i32, frame: i32) -> i64 = {
+    let status = session(kind, frame);
+    if (status != OK) return -(status as i64);
+    return lookup(token, kind);
+}
+
+fun available() -> i64 = {
+    ensureSlots();
+    var found: i64 = -1i64;
+    var i: i64 = SLOT_COUNT - 1i64;
+    while (i >= 0i64) {
+        if (state.slots.at(i).kind == EMPTY and not state.slots.at(i).retired) found = i;
+        i -= 1i64;
+    }
+    return found;
+}
+
+fun publish(index: i64, kind: i32) -> u64 = {
+    if (state.slots.at(index).generation == 0u32) state.slots.at(index).generation = 1u32;
+    state.slots.at(index).kind = kind;
+    return ((state.slots.at(index).generation as u64) << 32u64) | ((index + 1i64) as u64);
+}
+
+fun release(index: i64) -> () = {
+    var kind = state.slots.at(index).kind;
+    if (kind == TEXTURE) raylib::UnloadTexture(state.slots.at(index).texture);
+    if (kind == FONT) raylib::UnloadFont(state.slots.at(index).font);
+    if (kind == SOUND) { raylib::StopSound(state.slots.at(index).sound); raylib::UnloadSound(state.slots.at(index).sound); }
+    if (kind == MUSIC) { raylib::StopMusicStream(state.slots.at(index).music); raylib::UnloadMusicStream(state.slots.at(index).music); }
+    if (kind == STREAM) { raylib::StopAudioStream(state.slots.at(index).stream); raylib::UnloadAudioStream(state.slots.at(index).stream); }
+    var generation = state.slots.at(index).generation;
+    var fresh = Slot();
+    if (generation == 4294967295u32) { fresh.generation = generation; fresh.retired = true; }
+    else fresh.generation = generation + 1u32;
+    state.slots.at(index) = fresh;
+}
+
+fun countKind(kind: i32) -> i32 = {
+    ensureSlots();
+    var count: i32 = 0i32;
+    var i: i64 = 0i64;
+    while (i < SLOT_COUNT) {
+        if (state.slots.at(i).kind == kind) count += 1i32;
+        i += 1i64;
+    }
+    return count;
+}
+
+# Consume raylib's key press queue into one bit mask; repeated presses coalesce.
+fun collectKeyPresses() -> i32 = {
+    var mask: i32 = 0i32;
+    ensureSlots();
+    var key: i32 = raylib::GetKeyPressed();
+    while (key != 0i32) {
+        mask = mask | keyMask(key);
+        # A press and release within one frame is not visible in IsKeyDown, so keep it.
+        if (key > 0i32 and (key as i64) < KEY_COUNT) {
+            state.keyFlags.at(key as i64) = state.keyFlags.at(key as i64) | KEY_FLAG_QUEUED;
+        }
+        key = raylib::GetKeyPressed();
+    }
+    return mask;
+}
+
+fun keyMask(key: i32) -> i32 = {
+    if (key == 65i32) return KEY_MASK_A;
+    if (key == 32i32) return KEY_MASK_SPACE;
+    if (key == 68i32) return KEY_MASK_D;
+    if (key == 80i32) return KEY_MASK_P;
+    if (key == 78i32) return KEY_MASK_N;
+    if (key == 256i32) return KEY_MASK_ESCAPE;
+    return 0i32;
+}
+
+fun keysDown() -> i32 = {
+    var mask: i32 = 0i32;
+    if (raylib::IsKeyDown(65i32)) mask = mask | KEY_MASK_A;
+    if (raylib::IsKeyDown(32i32)) mask = mask | KEY_MASK_SPACE;
+    if (raylib::IsKeyDown(68i32)) mask = mask | KEY_MASK_D;
+    if (raylib::IsKeyDown(80i32)) mask = mask | KEY_MASK_P;
+    if (raylib::IsKeyDown(78i32)) mask = mask | KEY_MASK_N;
+    if (raylib::IsKeyDown(256i32)) mask = mask | KEY_MASK_ESCAPE;
+    return mask;
+}
+
+#{
+    Otwórz okno width×height (1..4096) z tytułem. DUCKLING_WINDOW_SCALE=0.5 pokazuje okno
+    w połowie rozmiaru; rysowanie i wejście pozostają w pikselach logicznych.
+#}
+fun windowOpen(width: i32, height: i32, title: str) -> i32 = {
+    if (state.windowOpen) return STATE;
+    if (width < 1i32 or width > 4096i32 or height < 1i32 or height > 4096i32) return VALUE;
+    let checked = checkText(title, false);
+    if (checked != OK) return checked;
+    var name = cString("DUCKLING_WINDOW_SCALE");
+    var scale: cptr char = libc::getenv(pointerOf(&name));
+    var half = false;
+    if (scale as u64 != 0u64) {
+        var halfText = cString("0.5");
+        var oneText = cString("1");
+        half = libc::strcmp(scale, pointerOf(&halfText)) == 0i32;
+        if (not half and libc::strcmp(scale, pointerOf(&oneText)) != 0i32) return VALUE;
+    }
+    if (half and (width < 2i32 or height < 2i32)) return VALUE;
+    var text = cString(title);
+    raylib::SetTraceLogLevel(LOG_NONE);
+    if (half) raylib::InitWindow(width / 2i32, height / 2i32, pointerOf(&text));
+    else raylib::InitWindow(width, height, pointerOf(&text));
+    if (not raylib::IsWindowReady()) { raylib::CloseWindow(); return BACKEND; }
+    if (half) {
+        let canvas = raylib::LoadRenderTexture(width, height);
+        if (not raylib::IsRenderTextureValid(canvas)) {
+            if (canvas.id != 0u32) raylib::UnloadRenderTexture(canvas);
+            raylib::CloseWindow();
+            return BACKEND;
+        }
+        state.canvas = canvas;
+        state.logicalWidth = width;
+        state.logicalHeight = height;
+        raylib::SetTextureFilter(canvas.texture, FILTER_BILINEAR);
+        raylib::SetMouseScale(2.0f32, 2.0f32);
+    }
+    state.windowOpen = true;
+    state.pendingClose = false;
+    state.pendingKeyPresses = 0i32;
+    raylib::SetExitKey(KEY_NULL);
+    state.previousKeys = 0i32;
+    state.previousMouse = 0i32;
+    clearKeyFlags();
+    return OK;
+}
+
+#{ Zamknij okno. BUSY, gdy trwa klatka albo są niezwolnione tekstury lub fonty. #}
+fun windowClose() -> i32 = {
+    if (not state.windowOpen) return STATE;
+    if (state.frameOpen) return BUSY;
+    if (countKind(FONT) > 0i32 or countKind(TEXTURE) > 0i32) return BUSY;
+    if (state.canvas.id != 0u32) {
+        raylib::UnloadRenderTexture(state.canvas);
+        state.canvas = RenderTexture();
+        raylib::SetMouseScale(1.0f32, 1.0f32);
+    }
+    raylib::CloseWindow();
+    state.windowOpen = false;
+    return OK;
+}
+
+fun frameBegin(rgba: u32) -> i32 = {
+    let status = session(TEXTURE, 0i32);
+    if (status != OK) return status;
+    raylib::BeginDrawing();
+    if (state.canvas.id != 0u32) raylib::BeginTextureMode(state.canvas);
+    state.frameOpen = true;
+    raylib::ClearBackground(color(rgba));
+    return OK;
+}
+
+fun rectangle(x: i32, y: i32, width: i32, height: i32, rgba: u32) -> i32 = {
+    let status = session(TEXTURE, 1i32);
+    if (status != OK) return status;
+    if (width <= 0i32 or height <= 0i32) return VALUE;
+    raylib::DrawRectangle(x, y, width, height, color(rgba));
+    return OK;
+}
+
+fun circle(x: i32, y: i32, radius: f32, rgba: u32) -> i32 = {
+    let status = session(TEXTURE, 1i32);
+    if (status != OK) return status;
+    if (not finite(radius) or radius <= 0.0f32) return VALUE;
+    raylib::DrawCircle(x, y, radius, color(rgba));
+    return OK;
+}
+
+fun triangle(ax: f32, ay: f32, bx: f32, by: f32, cx: f32, cy: f32, rgba: u32) -> i32 = {
+    let status = session(TEXTURE, 1i32);
+    if (status != OK) return status;
+    if (not (finite(ax) and finite(ay) and finite(bx) and finite(by) and finite(cx) and finite(cy))) return VALUE;
+    raylib::DrawTriangle(Vector2(ax, ay), Vector2(bx, by), Vector2(cx, cy), color(rgba));
+    return OK;
+}
+
+#{ Odcinek od (x1, y1) do (x2, y2) o grubości thickness pikseli. #}
+fun line(x1: f32, y1: f32, x2: f32, y2: f32, thickness: f32, rgba: u32) -> i32 = {
+    let status = session(TEXTURE, 1i32);
+    if (status != OK) return status;
+    if (not (finite(x1) and finite(y1) and finite(x2) and finite(y2) and finite(thickness)) or thickness <= 0.0f32) return VALUE;
+    raylib::DrawLineEx(Vector2(x1, y1), Vector2(x2, y2), thickness, color(rgba));
+    return OK;
+}
+
+#{ Obrys prostokąta (lewy górny róg x, y) o grubości thickness pikseli. #}
+fun rectangleLines(x: i32, y: i32, width: i32, height: i32, thickness: f32, rgba: u32) -> i32 = {
+    let status = session(TEXTURE, 1i32);
+    if (status != OK) return status;
+    if (width <= 0i32 or height <= 0i32 or not finite(thickness) or thickness <= 0.0f32) return VALUE;
+    raylib::DrawRectangleLinesEx(Rectangle(x as f32, y as f32, width as f32, height as f32), thickness, color(rgba));
+    return OK;
+}
+
+#{ Obrys okręgu o środku (x, y). #}
+fun circleLines(x: i32, y: i32, radius: f32, rgba: u32) -> i32 = {
+    let status = session(TEXTURE, 1i32);
+    if (status != OK) return status;
+    if (not finite(radius) or radius <= 0.0f32) return VALUE;
+    raylib::DrawCircleLines(x, y, radius, color(rgba));
+    return OK;
+}
+
+#{
+    Prostokąt o środku (cx, cy) obrócony o degrees stopni zgodnie z ruchem wskazówek
+    zegara. Pasuje do pudełek z fizyki: środek i pełne wymiary w pikselach.
+#}
+fun rectangleRotated(cx: f32, cy: f32, width: f32, height: f32, degrees: f32, rgba: u32) -> i32 = {
+    let status = session(TEXTURE, 1i32);
+    if (status != OK) return status;
+    if (not (finite(cx) and finite(cy) and finite(width) and finite(height) and finite(degrees))
+        or width <= 0.0f32 or height <= 0.0f32) return VALUE;
+    raylib::DrawRectanglePro(Rectangle(cx, cy, width, height), Vector2(width / 2.0f32, height / 2.0f32), degrees, color(rgba));
+    return OK;
+}
+
+fun asciiOnly(text: str) -> bool = {
+    var i: i64 = 0i64;
+    var ok = true;
+    while (i < text.length()) {
+        if ((text[i] as u32) >= 128u32) ok = false;
+        i += 1i64;
+    }
+    return ok;
+}
+
+#{
+    Tekst wbudowanym fontem raylib, bez wczytywania pliku: (x, y) to lewy górny róg,
+    size to wysokość w pikselach (np. 20). Tylko ASCII; polskie litery wymagają fontLoad.
+#}
+fun textDefault(text: str, x: i32, y: i32, size: i32, rgba: u32) -> i32 = {
+    let status = session(TEXTURE, 1i32);
+    if (status != OK) return status;
+    if (size <= 0i32) return VALUE;
+    let checked = checkText(text, false);
+    if (checked != OK) return checked;
+    if (not asciiOnly(text)) return VALUE;
+    var c = cString(text);
+    raylib::DrawText(pointerOf(&c), x, y, size, color(rgba));
+    return OK;
+}
+
+fun sized(status: i32, value: i32) -> (i32, i32) = { return (status, value); }
+
+#{ (status, szerokość w pikselach) tekstu rysowanego przez textDefault. Wymaga okna. #}
+fun textDefaultWidth(text: str, size: i32) -> (i32, i32) = {
+    let status = session(TEXTURE, -1i32);
+    if (status != OK) return sized(status, 0i32);
+    if (size <= 0i32) return sized(VALUE, 0i32);
+    let checked = checkText(text, false);
+    if (checked != OK) return sized(checked, 0i32);
+    if (not asciiOnly(text)) return sized(VALUE, 0i32);
+    var c = cString(text);
+    return sized(OK, raylib::MeasureText(pointerOf(&c), size));
+}
+
+#{ Zapisz bieżącą klatkę jako obraz (format według rozszerzenia, np. .png). #}
+fun frameSave(path: str) -> i32 = {
+    let status = session(TEXTURE, 1i32);
+    if (status != OK) return status;
+    let checked = checkText(path, false);
+    if (checked != OK) return checked;
+    raylib::rlDrawRenderBatchActive();
+    var image = Image();
+    if (state.canvas.id != 0u32) {
+        image = raylib::LoadImageFromTexture(state.canvas.texture);
+        if (image.data as u64 != 0u64) raylib::ImageFlipVertical(&image as cptr Image);
+    } else image = raylib::LoadImageFromScreen();
+    if (not raylib::IsImageValid(image)) {
+        if (image.data as u64 != 0u64) raylib::UnloadImage(image);
+        return IO;
+    }
+    var text = cString(path);
+    let ok = raylib::ExportImage(image, pointerOf(&text));
+    raylib::UnloadImage(image);
+    if (ok) return OK;
+    return IO;
+}
+
+fun frameEnd() -> i32 = {
+    let status = session(TEXTURE, 1i32);
+    if (status != OK) return status;
+    if (state.canvas.id != 0u32) {
+        raylib::EndTextureMode();
+        raylib::DrawTexturePro(state.canvas.texture,
+            Rectangle(0.0f32, 0.0f32, state.logicalWidth as f32, -(state.logicalHeight as f32)),
+            Rectangle(0.0f32, 0.0f32, raylib::GetScreenWidth() as f32, raylib::GetScreenHeight() as f32),
+            Vector2(0.0f32, 0.0f32), 0.0f32, Color(255u8, 255u8, 255u8, 255u8));
+    }
+    # A game may draw several physics observations before polling input.
+    state.pendingKeyPresses = state.pendingKeyPresses | collectKeyPresses();
+    state.pendingClose = raylib::WindowShouldClose() or state.pendingClose;
+    raylib::EndDrawing();
+    state.pendingClose = raylib::WindowShouldClose() or state.pendingClose;
+    state.pendingKeyPresses = state.pendingKeyPresses | collectKeyPresses();
+    state.frameOpen = false;
+    return OK;
+}
+
+fun textureLoad(path: str) -> (i32, u64) = {
+    let status = session(TEXTURE, 0i32);
+    if (status != OK) return handle(status, 0u64);
+    let checked = checkText(path, false);
+    if (checked != OK) return handle(checked, 0u64);
+    let index = available();
+    if (index < 0i64) return handle(LIMIT, 0u64);
+    var text = cString(path);
+    let texture = raylib::LoadTexture(pointerOf(&text));
+    if (not raylib::IsTextureValid(texture)) {
+        if (texture.id != 0u32) raylib::UnloadTexture(texture);
+        return handle(LOAD, 0u64);
+    }
+    raylib::SetTextureFilter(texture, FILTER_POINT);
+    state.slots.at(index).texture = texture;
+    return handle(OK, publish(index, TEXTURE));
+}
+
+fun textureDraw(token: u64, x: i32, y: i32, rgba: u32) -> i32 = {
+    let index = resource(token, TEXTURE, 1i32);
+    if (index < 0i64) return (-index) as i32;
+    raylib::DrawTexture(state.slots.at(index).texture, x, y, color(rgba));
+    return OK;
+}
+
+fun pairOfSizes(status: i32, width: i32, height: i32) -> (i32, i32, i32) = { return (status, width, height); }
+
+#{ (status, szerokość, wysokość) tekstury w pikselach. #}
+fun textureSize(token: u64) -> (i32, i32, i32) = {
+    let index = resource(token, TEXTURE, -1i32);
+    if (index < 0i64) return pairOfSizes((-index) as i32, 0i32, 0i32);
+    let texture = state.slots.at(index).texture;
+    return pairOfSizes(OK, texture.width, texture.height);
+}
+
+#{
+    Narysuj fragment tekstury (sx, sy, sw, sh w pikselach tekstury) tak, aby jego środek
+    wypadł w (cx, cy), powiększony scale razy i obrócony o degrees stopni. Cała tekstura:
+    sx = sy = 0, sw i sh z textureSize. Fragmenty pozwalają używać arkuszy sprite'ów.
+#}
+fun textureDrawRegion(token: u64, sx: f32, sy: f32, sw: f32, sh: f32,
+    cx: f32, cy: f32, scale: f32, degrees: f32, rgba: u32) -> i32 = {
+    let index = resource(token, TEXTURE, 1i32);
+    if (index < 0i64) return (-index) as i32;
+    if (not (finite(sx) and finite(sy) and finite(sw) and finite(sh) and finite(cx) and finite(cy)
+        and finite(scale) and finite(degrees)) or scale <= 0.0f32 or sw == 0.0f32 or sh == 0.0f32) return VALUE;
+    # Negative sw or sh mirror the region, so the drawn size uses their absolute values.
+    let width = (if sw < 0.0f32 then -sw else sw) * scale;
+    let height = (if sh < 0.0f32 then -sh else sh) * scale;
+    raylib::DrawTexturePro(state.slots.at(index).texture, Rectangle(sx, sy, sw, sh),
+        Rectangle(cx, cy, width, height), Vector2(width / 2.0f32, height / 2.0f32), degrees, color(rgba));
+    return OK;
+}
+
+fun textureUnload(token: u64) -> i32 = {
+    let index = resource(token, TEXTURE, 0i32);
+    if (index < 0i64) return (-index) as i32;
+    release(index);
+    return OK;
+}
+
+#{
+    Wczytaj font TTF w rozmiarze pixels (1..256) z drukowalnym ASCII i polskimi literami.
+    LOAD, gdy plik nie istnieje albo nie zawiera któregoś z tych znaków.
+#}
+fun fontLoad(path: str, pixels: i32) -> (i32, u64) = {
+    let status = session(FONT, 0i32);
+    if (status != OK) return handle(status, 0u64);
+    if (pixels < 1i32 or pixels > 256i32) return handle(VALUE, 0u64);
+    let checked = checkText(path, false);
+    if (checked != OK) return handle(checked, 0u64);
+    let index = available();
+    if (index < 0i64) return handle(LIMIT, 0u64);
+    var codepoints: i32[113];
+    var c: i64 = 0i64;
+    while (c < 95i64) { codepoints[c] = (c as i32) + 32i32; c += 1i64; }
+    while (c < 113i64) { codepoints[c] = polishCodepoint((c - 95i64) as i32); c += 1i64; }
+    var text = cString(path);
+    # raylib's failed LoadFontEx can return the shared default font: never own it.
+    let font = raylib::LoadFontEx(pointerOf(&text), pixels,
+        &codepoints[0] as cptr i32, 113i32);
+    let fallback = raylib::GetFontDefault();
+    if (not raylib::IsFontValid(font) or font.glyphs as u64 == 0u64 or font.recs as u64 == 0u64
+        or font.texture.id == 0u32 or font.texture.id == fallback.texture.id or font.glyphCount != 113i32) {
+        if (font.texture.id != fallback.texture.id
+            and (font.texture.id != 0u32 or font.glyphs as u64 != 0u64 or font.recs as u64 != 0u64)) {
+            raylib::UnloadFont(font);
+        }
+        return handle(LOAD, 0u64);
+    }
+    # GetGlyphIndex falls back silently, so check the loaded glyph values directly.
+    let glyphs = font.glyphs;
+    var complete = true;
+    var i: i64 = 0i64;
+    while (i < 113i64) {
+        var found = false;
+        var j: i64 = 0i64;
+        while (j < font.glyphCount as i64) {
+            if (glyphs[j].value == codepoints[i]) found = true;
+            j += 1i64;
+        }
+        if (not found) complete = false;
+        i += 1i64;
+    }
+    if (not complete) { raylib::UnloadFont(font); return handle(LOAD, 0u64); }
+    raylib::SetTextureFilter(font.texture, FILTER_POINT);
+    state.slots.at(index).font = font;
+    return handle(OK, publish(index, FONT));
+}
+
+fun textDraw(token: u64, text: str, x: f32, y: f32, size: f32, spacing: f32, rgba: u32) -> i32 = {
+    let index = resource(token, FONT, 1i32);
+    if (index < 0i64) return (-index) as i32;
+    if (not (finite(x) and finite(y) and finite(size) and finite(spacing)) or size <= 0.0f32 or spacing < 0.0f32) return VALUE;
+    let checked = checkText(text, true);
+    if (checked != OK) return checked;
+    var c = cString(text);
+    raylib::DrawTextEx(state.slots.at(index).font, pointerOf(&c), Vector2(x, y), size, spacing, color(rgba));
+    return OK;
+}
+
+#{ Zmierz tekst: (status, szerokość, wysokość) w pikselach. Działa także poza klatką. #}
+fun textMeasure(token: u64, text: str, size: f32, spacing: f32) -> (i32, f32, f32) = {
+    let index = resource(token, FONT, -1i32);
+    if (index < 0i64) return measurement((-index) as i32, 0.0f32, 0.0f32);
+    if (not (finite(size) and finite(spacing)) or size <= 0.0f32 or spacing < 0.0f32) return measurement(VALUE, 0.0f32, 0.0f32);
+    let checked = checkText(text, true);
+    if (checked != OK) return measurement(checked, 0.0f32, 0.0f32);
+    var c = cString(text);
+    let measured = raylib::MeasureTextEx(state.slots.at(index).font, pointerOf(&c), size, spacing);
+    return measurement(OK, measured.x, measured.y);
+}
+
+fun fontUnload(token: u64) -> i32 = {
+    let index = resource(token, FONT, 0i32);
+    if (index < 0i64) return (-index) as i32;
+    release(index);
+    return OK;
+}
+
+fun updateKeyFlags() -> () = {
+    var k: i64 = 1i64;
+    while (k < KEY_COUNT) {
+        let old = state.keyFlags.at(k);
+        let wasDown = (old & KEY_FLAG_DOWN) != 0u8;
+        let down = raylib::IsKeyDown(k as i32);
+        var flags: u8 = 0u8;
+        if (down) flags = flags | KEY_FLAG_DOWN;
+        if ((old & KEY_FLAG_QUEUED) != 0u8 or (down and not wasDown)) flags = flags | KEY_FLAG_PRESSED;
+        if (wasDown and not down) flags = flags | KEY_FLAG_RELEASED;
+        state.keyFlags.at(k) = flags;
+        k += 1i64;
+    }
+}
+
+fun keyFlag(key: i32, flag: u8) -> bool = {
+    ensureSlots();
+    if (key <= 0i32 or (key as i64) >= KEY_COUNT) return false;
+    return (state.keyFlags.at(key as i64) & flag) != 0u8;
+}
+
+#{ Czy klawisz (stała KEY_*) był wciśnięty podczas ostatniego inputPoll. #}
+fun keyDown(key: i32) -> bool = keyFlag(key, KEY_FLAG_DOWN);
+
+#{ Czy klawisz został naciśnięty od poprzedniego inputPoll (także krótkie stuknięcie). #}
+fun keyPressed(key: i32) -> bool = keyFlag(key, KEY_FLAG_PRESSED);
+
+#{ Czy klawisz został puszczony od poprzedniego inputPoll. #}
+fun keyReleased(key: i32) -> bool = keyFlag(key, KEY_FLAG_RELEASED);
+
+#{
+    Odczytaj wejście do input. Wpisane znaki (najwyżej 32 od poprzedniego odczytu) trafiają
+    do input.chars; więcej daje LIMIT bez zmiany input. Wywołuj poza klatką.
+#}
+fun inputPoll(input: ref InputState) -> i32 = {
+    let status = session(TEXTURE, 0i32);
+    if (status != OK) return status;
+    var closeRequested = raylib::WindowShouldClose() or state.pendingClose;
+    state.pendingKeyPresses = state.pendingKeyPresses | collectKeyPresses();
+    raylib::PollInputEvents();
+    closeRequested = raylib::WindowShouldClose() or closeRequested;
+    state.pendingKeyPresses = state.pendingKeyPresses | collectKeyPresses();
+    let keys = keysDown();
+    var mouse: i32 = 0i32;
+    if (raylib::IsMouseButtonDown(MOUSE_BUTTON_LEFT)) mouse = mouse | MOUSE_LEFT;
+    if (raylib::IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) mouse = mouse | MOUSE_RIGHT;
+    if (raylib::IsMouseButtonDown(MOUSE_BUTTON_MIDDLE)) mouse = mouse | MOUSE_MIDDLE;
+    let wheel = raylib::GetMouseWheelMove();
+    var chars: List[u32];
+    var overflow = false;
+    var cp: i32 = raylib::GetCharPressed();
+    while (cp != 0i32) {
+        if (chars.length() == 32i64) overflow = true;
+        else chars.push(cp as u32);
+        cp = raylib::GetCharPressed();
+    }
+    if (overflow) return LIMIT;
+    input.keysDown = keys;
+    input.keysPressed = state.pendingKeyPresses | (keys & (~state.previousKeys));
+    input.keysReleased = state.previousKeys & (~keys);
+    input.mouseDown = mouse;
+    input.mousePressed = mouse & (~state.previousMouse);
+    input.mouseReleased = state.previousMouse & (~mouse);
+    updateKeyFlags();
+    input.mouseX = raylib::GetMouseX();
+    input.mouseY = raylib::GetMouseY();
+    input.wheel = wheel;
+    input.closeRequested = closeRequested;
+    input.chars = move chars;
+    state.pendingClose = false;
+    state.pendingKeyPresses = 0i32;
+    state.previousKeys = keys;
+    state.previousMouse = mouse;
+    return OK;
+}
+
+fun audioOpen() -> i32 = {
+    if (state.audioOpen) return STATE;
+    raylib::SetTraceLogLevel(LOG_NONE);
+    raylib::InitAudioDevice();
+    if (not raylib::IsAudioDeviceReady()) { raylib::CloseAudioDevice(); return BACKEND; }
+    raylib::SetMasterVolume(1.0f32);
+    raylib::SetAudioStreamBufferSizeDefault(4096i32);
+    state.audioOpen = true;
+    return OK;
+}
+
+#{ Zamknij urządzenie dźwięku. BUSY, gdy są niezwolnione dźwięki, muzyka lub strumienie. #}
+fun audioClose() -> i32 = {
+    if (not state.audioOpen) return STATE;
+    if (countKind(SOUND) > 0i32 or countKind(MUSIC) > 0i32 or countKind(STREAM) > 0i32) return BUSY;
+    raylib::CloseAudioDevice();
+    state.audioOpen = false;
+    return OK;
+}
+
+fun soundLoad(path: str) -> (i32, u64) = {
+    let status = session(SOUND, -1i32);
+    if (status != OK) return handle(status, 0u64);
+    let checked = checkText(path, false);
+    if (checked != OK) return handle(checked, 0u64);
+    let index = available();
+    if (index < 0i64) return handle(LIMIT, 0u64);
+    var text = cString(path);
+    let sound = raylib::LoadSound(pointerOf(&text));
+    if (not raylib::IsSoundValid(sound)) {
+        if (sound.stream.buffer as u64 != 0u64) raylib::UnloadSound(sound);
+        return handle(LOAD, 0u64);
+    }
+    state.slots.at(index).sound = sound;
+    return handle(OK, publish(index, SOUND));
+}
+
+fun musicLoad(path: str) -> (i32, u64) = {
+    let status = session(MUSIC, -1i32);
+    if (status != OK) return handle(status, 0u64);
+    let checked = checkText(path, false);
+    if (checked != OK) return handle(checked, 0u64);
+    let index = available();
+    if (index < 0i64) return handle(LIMIT, 0u64);
+    raylib::SetAudioStreamBufferSizeDefault(4096i32);
+    var text = cString(path);
+    var music = raylib::LoadMusicStream(pointerOf(&text));
+    if (not raylib::IsMusicValid(music) or not raylib::IsAudioStreamValid(music.stream)) {
+        if (music.stream.buffer as u64 != 0u64 or music.ctxData as u64 != 0u64) raylib::UnloadMusicStream(music);
+        return handle(LOAD, 0u64);
+    }
+    music.looping = false;
+    state.slots.at(index).music = music;
+    return handle(OK, publish(index, MUSIC));
+}
+
+#{ Strumień PCM 16-bitowy; obsługiwane jest tylko 48000 Hz i 2 kanały. #}
+fun streamLoad(rate: u32, channels: u32) -> (i32, u64) = {
+    let status = session(STREAM, -1i32);
+    if (status != OK) return handle(status, 0u64);
+    if (rate != 48000u32 or channels != 2u32) return handle(VALUE, 0u64);
+    let index = available();
+    if (index < 0i64) return handle(LIMIT, 0u64);
+    raylib::SetAudioStreamBufferSizeDefault(4096i32);
+    let stream = raylib::LoadAudioStream(rate, 16u32, channels);
+    if (not raylib::IsAudioStreamValid(stream)) {
+        if (stream.buffer as u64 != 0u64) raylib::UnloadAudioStream(stream);
+        return handle(LOAD, 0u64);
+    }
+    state.slots.at(index).stream = stream;
+    state.slots.at(index).streamStaged = false;
+    state.slots.at(index).streamVolume = 1.0f32;
+    return handle(OK, publish(index, STREAM));
+}
+
+fun audioResource(token: u64, kind: i32) -> i64 = resource(token, kind, -1i32);
+
+fun soundUnload(token: u64) -> i32 = {
+    let index = audioResource(token, SOUND);
+    if (index < 0i64) return (-index) as i32;
+    release(index);
+    return OK;
+}
+
+fun musicUnload(token: u64) -> i32 = {
+    let index = audioResource(token, MUSIC);
+    if (index < 0i64) return (-index) as i32;
+    release(index);
+    return OK;
+}
+
+fun streamUnload(token: u64) -> i32 = {
+    let index = audioResource(token, STREAM);
+    if (index < 0i64) return (-index) as i32;
+    release(index);
+    return OK;
+}
+
+fun soundPlay(token: u64) -> i32 = {
+    let index = audioResource(token, SOUND);
+    if (index < 0i64) return (-index) as i32;
+    raylib::StopSound(state.slots.at(index).sound);
+    raylib::PlaySound(state.slots.at(index).sound);
+    return OK;
+}
+
+fun soundStop(token: u64) -> i32 = {
+    let index = audioResource(token, SOUND);
+    if (index < 0i64) return (-index) as i32;
+    raylib::StopSound(state.slots.at(index).sound);
+    return OK;
+}
+
+fun musicPlay(token: u64) -> i32 = {
+    let index = audioResource(token, MUSIC);
+    if (index < 0i64) return (-index) as i32;
+    raylib::StopMusicStream(state.slots.at(index).music);
+    raylib::PlayMusicStream(state.slots.at(index).music);
+    return OK;
+}
+
+#{ Doładuj bufor muzyki; wywołuj w każdej klatce, gdy muzyka gra. #}
+fun musicUpdate(token: u64) -> i32 = {
+    let index = audioResource(token, MUSIC);
+    if (index < 0i64) return (-index) as i32;
+    raylib::UpdateMusicStream(state.slots.at(index).music);
+    return OK;
+}
+
+fun musicStop(token: u64) -> i32 = {
+    let index = audioResource(token, MUSIC);
+    if (index < 0i64) return (-index) as i32;
+    raylib::StopMusicStream(state.slots.at(index).music);
+    return OK;
+}
+
+fun streamPlay(token: u64) -> i32 = {
+    let index = audioResource(token, STREAM);
+    if (index < 0i64) return (-index) as i32;
+    raylib::PlayAudioStream(state.slots.at(index).stream);
+    return OK;
+}
+
+#{
+    Zatrzymaj strumień i wyczyść jego kolejkę. raylib 5.5 czyści tylko grający bufor,
+    więc wypełniony, a nigdy nie odtworzony strumień dostaje nowy bufor z tą samą głośnością.
+#}
+fun streamStop(token: u64) -> i32 = {
+    let index = audioResource(token, STREAM);
+    if (index < 0i64) return (-index) as i32;
+    if (state.slots.at(index).streamStaged and not raylib::IsAudioStreamPlaying(state.slots.at(index).stream)) {
+        raylib::SetAudioStreamBufferSizeDefault(4096i32);
+        let fresh = raylib::LoadAudioStream(48000u32, 16u32, 2u32);
+        if (not raylib::IsAudioStreamValid(fresh)) {
+            if (fresh.buffer as u64 != 0u64) raylib::UnloadAudioStream(fresh);
+            return LOAD;
+        }
+        raylib::SetAudioStreamVolume(fresh, state.slots.at(index).streamVolume);
+        raylib::StopAudioStream(state.slots.at(index).stream);
+        raylib::UnloadAudioStream(state.slots.at(index).stream);
+        state.slots.at(index).stream = fresh;
+    } else raylib::StopAudioStream(state.slots.at(index).stream);
+    state.slots.at(index).streamStaged = false;
+    return OK;
+}
+
+fun volumeValid(volume: f32) -> bool = finite(volume) and volume >= 0.0f32 and volume <= 1.0f32;
+
+fun soundVolume(token: u64, volume: f32) -> i32 = {
+    let index = audioResource(token, SOUND);
+    if (index < 0i64) return (-index) as i32;
+    if (not volumeValid(volume)) return VALUE;
+    raylib::SetSoundVolume(state.slots.at(index).sound, volume);
+    return OK;
+}
+
+fun musicVolume(token: u64, volume: f32) -> i32 = {
+    let index = audioResource(token, MUSIC);
+    if (index < 0i64) return (-index) as i32;
+    if (not volumeValid(volume)) return VALUE;
+    raylib::SetMusicVolume(state.slots.at(index).music, volume);
+    return OK;
+}
+
+fun streamVolume(token: u64, volume: f32) -> i32 = {
+    let index = audioResource(token, STREAM);
+    if (index < 0i64) return (-index) as i32;
+    if (not volumeValid(volume)) return VALUE;
+    raylib::SetAudioStreamVolume(state.slots.at(index).stream, volume);
+    state.slots.at(index).streamVolume = volume;
+    return OK;
+}
+
+#{ (status, gotowy): czy strumień przyjmie kolejną porcję przez streamWrite. #}
+fun streamReady(token: u64) -> (i32, bool) = {
+    let index = audioResource(token, STREAM);
+    if (index < 0i64) return ready((-index) as i32, false);
+    return ready(OK, raylib::IsAudioStreamProcessed(state.slots.at(index).stream));
+}
+
+#{
+    Dopisz frames (1..4096) ramek PCM s16 stereo spod adresu pcm (frames * 4 bajtów);
+    BUSY, gdy strumień nie jest gotowy.
+#}
+fun streamWrite(token: u64, pcm: cptr u8, frames: u32) -> i32 = {
+    let index = audioResource(token, STREAM);
+    if (index < 0i64) return (-index) as i32;
+    if (pcm as u64 == 0u64 or frames == 0u32 or frames > 4096u32) return VALUE;
+    if (not raylib::IsAudioStreamProcessed(state.slots.at(index).stream)) return BUSY;
+    # UpdateAudioStream copies the samples before returning.
+    raylib::UpdateAudioStream(state.slots.at(index).stream, pcm, frames as i32);
+    state.slots.at(index).streamStaged = true;
+    return OK;
+}
+
+#{ Zwolnij wszystkie zasoby, zamknij dźwięk i okno; bezpieczne przy każdym stanie. #}
+fun cleanup() -> i32 = {
+    ensureSlots();
+    if (state.frameOpen) { raylib::EndDrawing(); state.frameOpen = false; }
+    var i: i64 = 0i64;
+    while (i < SLOT_COUNT) {
+        let current = state.slots.at(i).kind;
+        if (current == SOUND) raylib::StopSound(state.slots.at(i).sound);
+        if (current == MUSIC) raylib::StopMusicStream(state.slots.at(i).music);
+        if (current == STREAM) raylib::StopAudioStream(state.slots.at(i).stream);
+        i += 1i64;
+    }
+    var kind: i32 = STREAM;
+    while (kind >= TEXTURE) {
+        i = 0i64;
+        while (i < SLOT_COUNT) {
+            if (state.slots.at(i).kind == kind) release(i);
+            i += 1i64;
+        }
+        if (kind == SOUND and state.audioOpen) { raylib::CloseAudioDevice(); state.audioOpen = false; }
+        kind -= 1i32;
+    }
+    if (state.audioOpen) { raylib::CloseAudioDevice(); state.audioOpen = false; }
+    if (state.windowOpen) { raylib::CloseWindow(); state.windowOpen = false; }
+    return OK;
+}
+
+fun counts() -> Counts = {
+    return Counts(countKind(TEXTURE), countKind(FONT), countKind(SOUND), countKind(MUSIC),
+        countKind(STREAM), state.windowOpen, state.audioOpen);
+}
+
+#{ Ogranicz liczbę klatek: frameEnd czeka tak, aby było ich najwyżej fps na sekundę. #}
+fun setTargetFps(fps: i32) -> () = { raylib::SetTargetFPS(fps); }
+
+#{ Czas trwania poprzedniej klatki w sekundach; wygodny do ruchu niezależnego od FPS. #}
+fun frameTime() -> f32 = raylib::GetFrameTime();
+
+#{ Aktualna liczba klatek na sekundę. #}
+fun currentFps() -> i32 = raylib::GetFPS();
+
+#{ Losowa liczba całkowita z przedziału [min, max] (oba końce włącznie). #}
+fun random(min: i32, max: i32) -> i32 = raylib::GetRandomValue(min, max);
+
+#{ Ustaw ziarno losowania, aby powtórzyć ten sam ciąg liczb. #}
+fun randomSeed(seed: u32) -> () = { raylib::SetRandomSeed(seed); }
+
+#{ Kolor 0xRRGGBBAA ze składowych 0..255. #}
+fun rgbaColor(r: u8, g: u8, b: u8, a: u8) -> u32 = {
+    return ((r as u32) << 24u32) | ((g as u32) << 16u32) | ((b as u32) << 8u32) | (a as u32);
+}
+
+#{ Sekundy od otwarcia okna. #}
+fun time() -> f64 = raylib::GetTime();
+
+#{ Wypchnij buforowane wyjście C (stdout); IO przy błędzie. #}
+fun flush() -> i32 = {
+    if (libc::fflush(0u64) == 0i32) return OK;
+    return IO;
+}
+
+#{ Czas monotoniczny w milisekundach. #}
+fun nowMs() -> u64 = {
+    var t = Timespec();
+    libc::clock_gettime(6i32, &t as cptr Timespec);
+    return (t.seconds as u64) * 1000u64 + (t.nanoseconds as u64) / 1000000u64;
+}
+
+#{ Czy jest ekran X (zmienna DISPLAY niepusta). #}
+fun displayAvailable() -> bool = {
+    var name = cString("DISPLAY");
+    let display: cptr char = libc::getenv(pointerOf(&name));
+    if (display as u64 == 0u64) return false;
+    return display[0] != '\0';
+}
+
+#{ Odczytaj jeden bajt ze standardowego wejścia: bajt, -1 przy końcu danych, -2 po czasie lub błędzie. #}
+fun readByte(timeoutMs: i32) -> i32 = {
+    var request = PollFd(0i32, 1i16, 0i16);
+    var result: i32 = libc::poll(&request as cptr PollFd, 1u64, timeoutMs);
+    while (result < 0i32 and libc::__error()[0] == EINTR) {
+        result = libc::poll(&request as cptr PollFd, 1u64, timeoutMs);
+    }
+    if (result <= 0i32) return -2i32;
+    var byte: u8 = 0u8;
+    var n: i64 = libc::read(0i32, &byte as cptr u8, 1u64);
+    while (n < 0i64 and libc::__error()[0] == EINTR) n = libc::read(0i32, &byte as cptr u8, 1u64);
+    if (n == 1i64) return byte as i32;
+    if (n == 0i64) return -1i32;
+    return -2i32;
+}
+
+#{ Uśpij na milliseconds (0..10000) milisekund. #}
+fun wait(milliseconds: i32) -> i32 = {
+    if (milliseconds < 0i32 or milliseconds > 10000i32) return VALUE;
+    var request = Timespec((milliseconds / 1000i32) as i64, ((milliseconds % 1000i32) as i64) * 1000000i64);
+    var remaining = Timespec();
+    while (libc::nanosleep(&request as cptr Timespec, &remaining as cptr Timespec) < 0i32) {
+        if (libc::__error()[0] != EINTR) return IO;
+        request = remaining;
+    }
+    return OK;
+}

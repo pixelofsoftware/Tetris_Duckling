@@ -40,14 +40,14 @@ Bez T-spinów, combo i premii back-to-back. To możliwe rozszerzenia.
 ## Uruchomienie (macOS)
 
 ```sh
-./uruchom.sh          # pierwszy raz przygotowuje raylib i pakiet grafika (~1 min), potem buduje i uruchamia grę
+./uruchom.sh          # buduje i uruchamia grę
 ./uruchom.sh testy    # testy logiki, bez okna
 ```
 
 Wymagania:
 * Duckling z `duck` w PATH (sprawdzone na `duckc 0.3-alpha (83882805a 2026-11-20)`, macOS 27.2, Apple Silicon);
 * Xcode Command Line Tools (git, make, clang);
-* repozytorium duckling-biblioteki, gałąź `paczki-duck`, domyślnie w `~/duckling-biblioteki` (inna ścieżka: `./przygotuj_macos.sh /ścieżka`).
+* nic więcej: pakiet `grafika` oraz raylib dla macOS (Apple Silicon) są w katalogu `zewnetrzne/` (opis: [zewnetrzne/README.md](zewnetrzne/README.md)), więc nie trzeba pobierać duckling-biblioteki ani budować raylib;
 
 ### Gotowy build (macOS, Apple Silicon)
 
@@ -59,6 +59,17 @@ gra/.duck_build/dev/tetris_gra
 
 Po pobraniu repozytorium jako ZIP (zamiast `git clone`) macOS może zablokować nieznany program; wtedy jednorazowo: `xattr -dr com.apple.quarantine gra/.duck_build`. Uwaga: `./uruchom.sh` buduje grę od nowa w tym samym katalogu i nadpisuje plik gry wersją, która korzysta z raylib w `zewnetrzne/`.
 
+## Uruchomienie (Linux)
+
+```sh
+sudo apt install build-essential git cmake libx11-dev libxrandr-dev libxinerama-dev \
+    libxcursor-dev libxi-dev libgl-dev libasound2-dev
+./uruchom.sh          # za pierwszym razem uruchamia ./przygotuj_linux.sh: wersje pakietów dla Linuksa i raylib
+./uruchom.sh testy    # testy logiki, bez okna
+```
+
+Potrzebny jest też Duckling z `duck` w PATH. `przygotuj_linux.sh` kopiuje wersje pakietów z `zewnetrzne/linux/` do `zewnetrzne/` (pliki z repozytorium dostają w git znacznik `skip-worktree`, więc `git status` pozostaje czysty) i buduje statyczną raylib 5.5 skryptem pakietu `grafika`. **Kroki dla Linuksa nie zostały sprawdzone na prawdziwej maszynie z Linuksem.**
+
 ## Struktura
 
 ```
@@ -67,7 +78,9 @@ gra/      pakiet tetris_gra: okno, klawiatura, rysowanie, pętla gry
 testy/    pakiet testy_tetrisa: 54 sprawdzenia logiki, kod wyjścia = liczba błędów
 zrzuty/   obrazy do README: TETRIS_ZRZUTY=1 gra/.duck_build/dev/tetris_gra
           (prosty automat układa 26 klocków, potem gra dochodzi do końca)
-przygotuj_macos.sh   raylib 5.5 i kopia pakietu grafika dla macOS do zewnetrzne/ (poza gitem)
+zewnetrzne/          pakiet grafika (wersje dla macOS i Linuksa) oraz raylib dla macOS; opis w zewnetrzne/README.md
+przygotuj_macos.sh   buduje raylib, gdy brakuje jej dla procesora Maca (np. Intel)
+przygotuj_linux.sh   przygotowanie na Linuksie: wersje pakietów z zewnetrzne/linux/ i raylib
 ```
 
 Testy sprawdzają między innymi:
@@ -97,4 +110,4 @@ Ta pułapka uzupełnia listę `dokumentacja/PULAPKI-DUCKLINGA.md` z duckling-bib
 
 ## Licencja
 
-MIT. Kopia pakietu `grafika` w `zewnetrzne/` pochodzi z duckling-biblioteki (MIT), a raylib ma licencję zlib. „Tetris” jest znakiem towarowym The Tetris Company; to projekt edukacyjny.
+MIT. Kopia pakietu `grafika` w `zewnetrzne/` pochodzi z duckling-biblioteki (MIT, Paweł Kępczyński; szczegóły w `zewnetrzne/README.md`), a raylib ma licencję zlib. „Tetris” jest znakiem towarowym The Tetris Company; to projekt edukacyjny.

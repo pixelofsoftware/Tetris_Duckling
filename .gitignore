@@ -1,4 +1,11 @@
-zewnetrzne/
+# zewnetrzne/ jest w repozytorium; ignorowane są tylko pliki budowane lokalnie:
+zewnetrzne/raylib/zrodla/
+zewnetrzne/raylib/make.log
+zewnetrzne/grafika/zewnetrzne/
+zewnetrzne/grafika/zbuduj_raylib.py
+zewnetrzne/grafika/README.md
+zewnetrzne/fizyka/README.md
+zewnetrzne/.linux-gotowe
 .duck_build/
 */.duck_build/
 .DS_Store
