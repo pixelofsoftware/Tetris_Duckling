@@ -1,0 +1,19 @@
+{
+  "packages": [
+    {
+      "id": "tetris_logika-1.0.0-f8093b54832af2e8023f54b3a3d5609483f21e0597722eace31199eae6e5119f",
+      "name": "tetris_logika",
+      "version": "1.0.0",
+      "features": [],
+      "path": "/Users/marcin/GitHub_projects/Tetris_Duckling/logika/src",
+      "dependencies": []
+    }
+  ],
+  "tasks": [
+    {
+      "package": "tetris_logika-1.0.0-f8093b54832af2e8023f54b3a3d5609483f21e0597722eace31199eae6e5119f",
+      "strategy": "lib",
+      "output_file": "/Users/marcin/GitHub_projects/Tetris_Duckling/gra/.duck_build/dev/tetris_logika-1.0.0-f8093b54832af2e8023f54b3a3d5609483f21e0597722eace31199eae6e5119f/tetris_logika-1.0.0-f8093b54832af2e8023f54b3a3d5609483f21e0597722eace31199eae6e5119f.a"
+    }
+  ]
+}

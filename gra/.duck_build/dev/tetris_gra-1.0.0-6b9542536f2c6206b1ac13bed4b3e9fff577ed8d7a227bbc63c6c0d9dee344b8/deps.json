@@ -1,0 +1,48 @@
+{
+  "packages": [
+    {
+      "id": "grafika-0.1.0-4568993e26265597a6ecafb8047cacd9986ebb6bca31686f618c1325f78b133d",
+      "name": "grafika",
+      "version": "0.1.0",
+      "features": [],
+      "path": "/Users/marcin/GitHub_projects/Tetris_Duckling/zewnetrzne/grafika/src",
+      "dependencies": []
+    },
+    {
+      "id": "tetris_gra-1.0.0-6b9542536f2c6206b1ac13bed4b3e9fff577ed8d7a227bbc63c6c0d9dee344b8",
+      "name": "tetris_gra",
+      "version": "1.0.0",
+      "features": [],
+      "path": "/Users/marcin/GitHub_projects/Tetris_Duckling/gra/src",
+      "dependencies": [
+        {
+          "id": "grafika-0.1.0-4568993e26265597a6ecafb8047cacd9986ebb6bca31686f618c1325f78b133d"
+        },
+        {
+          "id": "tetris_logika-1.0.0-f8093b54832af2e8023f54b3a3d5609483f21e0597722eace31199eae6e5119f"
+        }
+      ]
+    },
+    {
+      "id": "tetris_logika-1.0.0-f8093b54832af2e8023f54b3a3d5609483f21e0597722eace31199eae6e5119f",
+      "name": "tetris_logika",
+      "version": "1.0.0",
+      "features": [],
+      "path": "/Users/marcin/GitHub_projects/Tetris_Duckling/logika/src",
+      "dependencies": []
+    }
+  ],
+  "tasks": [
+    {
+      "package": "tetris_gra-1.0.0-6b9542536f2c6206b1ac13bed4b3e9fff577ed8d7a227bbc63c6c0d9dee344b8",
+      "strategy": "native",
+      "output_file": "/Users/marcin/GitHub_projects/Tetris_Duckling/gra/.duck_build/dev/tetris_gra",
+      "linking_options": [
+        "/Users/marcin/GitHub_projects/Tetris_Duckling/gra/.duck_build/dev/grafika-0.1.0-4568993e26265597a6ecafb8047cacd9986ebb6bca31686f618c1325f78b133d/grafika-0.1.0-4568993e26265597a6ecafb8047cacd9986ebb6bca31686f618c1325f78b133d.a",
+        "/Users/marcin/GitHub_projects/Tetris_Duckling/gra/.duck_build/dev/tetris_logika-1.0.0-f8093b54832af2e8023f54b3a3d5609483f21e0597722eace31199eae6e5119f/tetris_logika-1.0.0-f8093b54832af2e8023f54b3a3d5609483f21e0597722eace31199eae6e5119f.a",
+        "/Users/marcin/GitHub_projects/Tetris_Duckling/zewnetrzne/raylib/lib/libraylib.dylib",
+        "-Wl,-rpath,/Users/marcin/GitHub_projects/Tetris_Duckling/zewnetrzne/raylib/lib"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "packages": [
+    {
+      "id": "grafika-0.1.0-4568993e26265597a6ecafb8047cacd9986ebb6bca31686f618c1325f78b133d",
+      "name": "grafika",
+      "version": "0.1.0",
+      "features": [],
+      "path": "/Users/marcin/GitHub_projects/Tetris_Duckling/zewnetrzne/grafika/src",
+      "dependencies": []
+    }
+  ],
+  "tasks": [
+    {
+      "package": "grafika-0.1.0-4568993e26265597a6ecafb8047cacd9986ebb6bca31686f618c1325f78b133d",
+      "strategy": "lib",
+      "output_file": "/Users/marcin/GitHub_projects/Tetris_Duckling/gra/.duck_build/dev/grafika-0.1.0-4568993e26265597a6ecafb8047cacd9986ebb6bca31686f618c1325f78b133d/grafika-0.1.0-4568993e26265597a6ecafb8047cacd9986ebb6bca31686f618c1325f78b133d.a"
+    }
+  ]
+}
